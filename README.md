@@ -4,27 +4,44 @@ AI-powered **vertical (9:16) short-form video generator** with neural text-to-sp
 and animated, word-by-word subtitles — built for TikTok / YouTube Shorts / Reels.
 
 Give it a one-line idea (or a full script), and it produces a ready-to-post
-`1080x1920` MP4 with a voice-over and kinetic captions that appear word by word.
+`1080x1920` MP4 with a voice-over and kinetic captions that appear in sync with
+the speech. The web UI is split into two tools:
+
+- **Subtitles & Captions** — three animated caption styles with downloadable
+  `.srt` / `.ass` files (active now).
+- **Video & Footage Builder** — footage backgrounds with crossfading scenes
+  (coming soon; the API is already available).
 
 ## Features
 
 - **Script generation** — auto-writes an engaging 25–35s voice-over script from a
   one-line idea using Google Gemini (or pass your own script directly).
-- **Two video styles**:
-  - **Emoji captions** — captions centered on a dark gradient with color emojis
-    baked into the script (Gemini suggests them automatically; emojis are
-    auto-inserted when the script lacks them).
-  - **Footage background** — captions near the bottom over real b-roll, with three
-    background options: **videos**, **photos** (both via the Pexels API), or
-    **animated icons** (via Iconify).
+- **Three caption styles**:
+  - **Word by Word** — each word appears alone with a quick pop and fade, in sync
+    with the voice-over.
+  - **Highlighted Sentence** — the full sentence stays visible while the spoken
+    word is highlighted and enlarged as it moves through the line.
+  - **Progressive Word Delivery** — words accumulate line by line until the
+    sentence is complete, then roll over.
+- **Two timing modes** — automatic **word-level timestamps** from the TTS engine,
+  or a **fixed words-per-caption** fallback (2–12 words) when timestamps are
+  missing or when you want even-sized caption lines.
+- **Emoji accents (optional)** — color emojis baked into the script (Gemini
+  suggests them automatically; emojis are auto-inserted when the script lacks
+  them) and rendered beside the words they follow.
+- **Subtitle file downloads** — every job also produces a style-independent
+  `.srt` and the styled `.ass`, served via `/api/outputs/:file`.
+- **Footage API** — captions near the bottom over real b-roll, with three
+  background options: **videos**, **photos** (both via the Pexels API), or
+  **animated icons** (via Iconify).
 - **Multi-scene footage** — long scripts are split into scenes (one per sentence)
   and each scene gets its own footage clip/photo/icon; scenes crossfade into each
   other. Icons are auto-picked per scene from the text (keyword map + Iconify
   search), including Arabic.
 - **Neural TTS** — high-quality voice-over via Microsoft Edge neural voices
   (`edge-tts`), with English and Arabic out of the box.
-- **Animated word-by-word captions** — every word pops and fades in sync with the
-  audio, rendered as ASS subtitles (RTL Arabic supported).
+- **Animated captions** — rendered as ASS subtitles burned into the video (RTL
+  Arabic supported).
 - **Smart word timing** — precise timestamps from the TTS engine; falls back to
   whisper-based alignment if edge-tts is unavailable.
 - **Runs anywhere** — plain Node.js or a single-command Docker container.
@@ -150,6 +167,30 @@ sentence, up to 6) and each scene gets its own clip/photo/icon, joined by
 crossfades. `meta.sceneCount` and `meta.scenes[]` (`text`, `query`, `source`,
 `icon`, `url`) describe the split.
 
+### `POST /api/generate/subtitles`
+
+Create a **Subtitles & Captions** job: captions centered on a dark gradient, with
+your choice of caption style and timing. Provide **either** an `idea` (Gemini
+writes the script) **or** a `script`.
+
+Body:
+
+| Field             | Values                                                       | Default |
+|-------------------|--------------------------------------------------------------|---------|
+| `idea`            | one-line idea (script auto-generated)                        | —       |
+| `script`          | full script text                                             | —       |
+| `language`        | `en` or `ar`                                                 | `en`    |
+| `captionStyle`    | `word` \| `sentence` \| `progressive`                        | `word`  |
+| `timingMode`      | `auto` (ms word timestamps) \| `words` (fixed words/line)    | `auto`  |
+| `wordsPerSegment` | 2–12 (used when `timingMode` is `words`)                     | `4`     |
+| `emojis`          | `true`/`false` — add emoji accents                           | `true`  |
+
+```sh
+curl -X POST http://localhost:8283/api/generate/subtitles \
+  -H "Content-Type: application/json" \
+  -d '{"idea":"How to brew great coffee","language":"en","captionStyle":"sentence","timingMode":"auto","emojis":true}'
+```
+
 ### `GET /api/jobs/:id`
 
 Poll for completion.
@@ -158,11 +199,16 @@ Poll for completion.
 curl http://localhost:8283/api/jobs/34d29fa4-...
 ```
 
-When `status` is `completed`, the job contains `outputUrl` (e.g. `/api/outputs/<id>.mp4`).
+When `status` is `completed`, the job contains `outputUrl`
+(`/api/outputs/<id>.mp4`) plus `subtitleSrtUrl` and `subtitleAssUrl`
+(`/api/outputs/<id>.srt` / `.ass`) for the downloadable subtitle files.
+`meta.captionStyle`, `meta.timingMode` and `meta.wordsPerSegment` describe what
+was rendered.
 
 ### `GET /api/outputs/:file`
 
-Download the rendered video.
+Download the rendered video or a subtitle file (`<id>.mp4`, `<id>.srt`,
+`<id>.ass`).
 
 ```sh
 curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
@@ -181,12 +227,17 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 ```
 .
 ├── app/
-│   ├── server.js            # Express API, pipeline orchestration, ASS builder
+│   ├── server.js            # Express API + pipeline orchestration
+│   ├── captions.js          # Caption engine: segmentation, 3 ASS styles, .srt
 │   ├── tts_word_timings.py  # edge-tts audio + word-boundary timing extraction
 │   └── align_words.py       # whisper-based alignment fallback
 ├── public/                  # Web UI
+│   ├── index.html           # Tab shell (Subtitles & Captions / Footage Builder)
+│   └── js/
+│       ├── app.js           # Shared helpers: tabs, fetch, job polling
+│       └── tools/           # One module per tool (subtitles.js, footage.js)
 ├── data/
-│   ├── output/              # Rendered MP4s (git-ignored)
+│   ├── output/              # Rendered MP4s + .srt/.ass (git-ignored)
 │   ├── work/                # Per-job scratch space (git-ignored)
 │   └── emoji_cache/         # Cached emoji PNGs (git-ignored)
 ├── Dockerfile

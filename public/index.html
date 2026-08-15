@@ -20,6 +20,31 @@
     header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
     header h1 span { color: #62c8ff; }
     header p { color: #8b90a5; font-size: 13px; margin-top: 6px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tab {
+      flex: 1;
+      background: #171a2b;
+      border: 1px solid #262a40;
+      color: #a7adc6;
+      border-radius: 12px;
+      padding: 12px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .tab.active { background: #62c8ff; color: #08131c; border-color: #62c8ff; }
+    .tab.disabled { opacity: 0.5; cursor: not-allowed; }
+    .tab .badge {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 4px;
+      opacity: 0.75;
+    }
+    .tool-panel { margin-bottom: 16px; }
     .card {
       background: #171a2b;
       border: 1px solid #262a40;
@@ -76,8 +101,21 @@
     .script-row { display: flex; gap: 8px; align-items: center; }
     .script-row button { flex: 0 0 auto; padding: 12px 18px; margin-top: 0; }
     .hint { font-size: 12px; color: #6f7490; margin-top: 8px; }
-    #status { display: none; }
-    #status.visible { display: block; }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      color: #e8eaf2;
+      text-transform: none;
+      letter-spacing: 0;
+      margin-top: 16px;
+    }
+    .check input { width: auto; accent-color: #62c8ff; margin: 0; }
+    .check .hint { margin: 0; }
+    .status { margin-top: 16px; }
     .progress {
       height: 8px;
       background: #0f1220;
@@ -90,12 +128,10 @@
       background: linear-gradient(90deg, #62c8ff, #7e6bff);
       transition: width 0.4s;
     }
-    #statusText { font-size: 13px; color: #a7adc6; margin-top: 10px; }
+    #sub-statusText { font-size: 13px; color: #a7adc6; margin-top: 10px; }
     .stage { font-weight: 600; color: #e8eaf2; }
     .error { color: #ff7d7d; font-size: 13px; margin-top: 10px; word-break: break-word; }
     .success { color: #62e0a0; font-size: 13px; margin-top: 10px; }
-    #result { display: none; }
-    #result.visible { display: block; }
     video {
       width: 100%;
       max-height: 520px;
@@ -112,6 +148,23 @@
       font-size: 14px;
       text-decoration: none;
     }
+    .dl-row { display: flex; gap: 10px; margin-top: 12px; }
+    .dl-row .dl { flex: 1; margin-top: 0; padding: 10px; background: #0f1220; border: 1px solid #2a2f4a; border-radius: 10px; }
+    .meta { text-align: center; }
+    .soon { text-align: center; padding: 40px 20px; }
+    .soon-badge {
+      display: inline-block;
+      background: #2a2f4a;
+      color: #a7adc6;
+      border-radius: 99px;
+      padding: 4px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .soon-title { font-size: 18px; margin: 14px 0 8px; }
+    .soon p { max-width: 380px; margin: 0 auto; }
     .jobs { font-size: 12px; color: #6f7490; margin-top: 12px; text-align: center; }
   </style>
 </head>
@@ -122,185 +175,21 @@
       <p>Turn a one-line idea into a 9:16 short video with voice-over and animated subtitles</p>
     </header>
 
-    <div class="card">
-      <label for="idea">One-line idea</label>
-      <input id="idea" type="text" placeholder="e.g. How to boil an egg in 30 seconds" />
+    <nav class="tabs">
+      <button class="tab active" data-tool="subtitles" type="button">Subtitles &amp; Captions</button>
+      <button class="tab disabled" data-tool="footage" type="button">Video &amp; Footage Builder <span class="badge">Coming Soon</span></button>
+    </nav>
 
-      <label>Script <span class="hint">(optional — auto-generated from idea via Gemini)</span></label>
-      <div class="script-row">
-        <textarea id="script" placeholder="Paste a full script, or let Gemini write one…"></textarea>
-        <button class="secondary" id="genScript" type="button">Generate script</button>
-      </div>
-
-      <label for="language">Language</label>
-      <select id="language">
-        <option value="en">English</option>
-        <option value="ar">Arabic (RTL)</option>
-      </select>
-
-      <label>Video style</label>
-      <div class="segmented" id="modeSeg">
-        <button class="seg active" data-mode="emoji" type="button">Emoji captions</button>
-        <button class="seg" data-mode="footage" type="button">Footage background</button>
-      </div>
-
-      <div id="footageOpts" class="hidden">
-        <label for="bgType">Background</label>
-        <select id="bgType">
-          <option value="video">Videos (Pexels)</option>
-          <option value="image">Photos (Pexels)</option>
-          <option value="icon">Icons (Iconify)</option>
-        </select>
-        <label for="bgQuery">Footage search <span class="hint">(optional — auto-derived from the idea/script)</span></label>
-        <input id="bgQuery" type="text" placeholder="e.g. cooking, nature, travel…" />
-      </div>
-
-      <div class="btns">
-        <button class="primary" id="generate" type="button">Generate video</button>
-      </div>
-      <p class="hint">Voice-over and animated word-level subtitles render into a 1080x1920 MP4. Scripts must stay under 60 seconds of speech.</p>
-    </div>
-
-    <div class="card" id="status">
-      <div class="stage" id="statusStage">Queued</div>
-      <div class="progress"><div id="progressBar"></div></div>
-      <div id="statusText"></div>
-      <div class="error" id="error"></div>
-    </div>
-
-    <div class="card" id="result">
-      <video id="video" controls playsinline></video>
-      <a class="dl" id="download" href="#">Download MP4</a>
-    </div>
+    <main>
+      <section class="tool-panel" id="tool-subtitles"></section>
+      <section class="tool-panel hidden" id="tool-footage"></section>
+    </main>
 
     <p class="jobs" id="jobCount"></p>
   </div>
 
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const statusCard = $('status');
-    const progressBar = $('progressBar');
-    const statusStage = $('statusStage');
-    const statusText = $('statusText');
-    const errorEl = $('error');
-    const resultCard = $('result');
-
-    function setStatus(stage, progress, text) {
-      statusCard.classList.add('visible');
-      statusStage.textContent = stage;
-      progressBar.style.width = (progress * 100) + '%';
-      statusText.textContent = text || '';
-      errorEl.textContent = '';
-    }
-
-    function setError(msg) {
-      errorEl.textContent = msg;
-    }
-
-    async function pollJob(id) {
-      for (let i = 0; i < 600; i++) {
-        const res = await fetch('/api/jobs/' + id);
-        if (!res.ok) { setError('Failed to fetch job status'); return; }
-        const data = await res.json();
-        const job = data.job;
-        if (job.status === 'processing') {
-          setStatus('Rendering…', 0.6, 'Running TTS and building subtitles…');
-        } else if (job.status === 'completed') {
-          setStatus('Done', 1, '');
-          const vid = $('video');
-          vid.src = job.outputUrl;
-          $('download').href = job.outputUrl;
-          resultCard.classList.add('visible');
-          setStatus('Done', 1, 'Your video is ready.');
-          return;
-        } else if (job.status === 'failed') {
-          setStatus('Failed', 1, '');
-          setError((job.errorCode ? '[' + job.errorCode + '] ' : '') + (job.error || 'Render failed'));
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-      setError('Timed out waiting for the job.');
-    }
-
-    $('generate').addEventListener('click', async () => {
-      const idea = $('idea').value.trim();
-      const script = $('script').value.trim();
-      const language = $('language').value;
-      if (!idea && !script) {
-        setError('Provide an idea and/or a script.');
-        return;
-      }
-      errorEl.textContent = '';
-      resultCard.classList.remove('visible');
-      setStatus('Queued', 0.05, 'Submitting job…');
-      const isFootage = currentMode === 'footage';
-      const body = { idea, script: script || undefined, language };
-      if (isFootage) {
-        body.background = $('bgType').value;
-        const q = $('bgQuery').value.trim();
-        if (q) body.query = q;
-      }
-      try {
-        const res = await fetch(isFootage ? '/api/generate/footage' : '/api/generate/emoji', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.message || data.error || 'Request failed');
-          return;
-        }
-        setStatus('Queued', 0.1, 'Job ' + data.job.id + ' submitted.');
-        pollJob(data.job.id);
-      } catch (e) {
-        setError('Network error: ' + e.message);
-      }
-    });
-
-    let currentMode = 'emoji';
-    $('modeSeg').addEventListener('click', (e) => {
-      const btn = e.target.closest('.seg');
-      if (!btn) return;
-      currentMode = btn.dataset.mode;
-      $('modeSeg').querySelectorAll('.seg').forEach((b) => b.classList.toggle('active', b === btn));
-      $('footageOpts').classList.toggle('hidden', currentMode !== 'footage');
-    });
-
-    $('genScript').addEventListener('click', async () => {
-      const idea = $('idea').value.trim();
-      if (!idea) {
-        setError('Type a one-line idea first.');
-        return;
-      }
-      $('genScript').disabled = true;
-      setStatus('Generating script…', 0.3, 'Asking Gemini…');
-      try {
-        const res = await fetch('/api/generate-script', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ idea, language: $('language').value }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.message || data.error || 'Script generation failed');
-          return;
-        }
-        $('script').value = data.script;
-        setStatus('Script ready', 1, 'Review the script, then click "Generate video".');
-      } catch (e) {
-        setError('Network error: ' + e.message);
-      } finally {
-        $('genScript').disabled = false;
-      }
-    });
-
-    fetch('/api/health').then((r) => r.json()).then((d) => {
-      $('jobCount').textContent = d.ok
-        ? 'Server healthy · ' + d.jobCount + ' jobs · Gemini ' + (d.geminiConfigured ? 'configured' : 'NOT configured')
-        : '';
-    }).catch(() => {});
-  </script>
+  <script src="/js/app.js"></script>
+  <script src="/js/tools/subtitles.js"></script>
+  <script src="/js/tools/footage.js"></script>
 </body>
 </html>

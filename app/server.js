@@ -9,6 +9,15 @@ const { spawn } = require('child_process');
 const express = require('express');
 const sharp = require('sharp');
 
+const captions = require('./captions');
+const {
+  segmentCaptions,
+  buildAss,
+  buildSrt,
+  splitSentences,
+  cleanWord,
+} = captions;
+
 const ENV_FILE = path.join(__dirname, '..', '.env');
 if (fs.existsSync(ENV_FILE)) {
   for (const line of fs.readFileSync(ENV_FILE, 'utf8').split('\n')) {
@@ -43,8 +52,12 @@ const ICONIFY_API = 'https://api.iconify.design';
 
 const STYLE_EMOJI = 'emoji';
 const STYLE_FOOTAGE = 'footage';
+const STYLE_SUBTITLES = 'subtitles';
 const BG_TYPES = { video: 'video', image: 'image', icon: 'icon' };
 const CAPTION_Y = { center: 900, bottom: 1620 };
+const CAPTION_STYLES = { word: 'word', sentence: 'sentence', progressive: 'progressive' };
+const TIMING_MODES = { auto: 'auto', words: 'words' };
+const DEFAULT_WORDS_PER_SEGMENT = 4;
 const EMOJI_SIZE = 96;
 const EMOJI_SPACING = 110;
 const EMOJI_LIFT = 130;
@@ -78,7 +91,18 @@ app.use(express.json({ limit: '1mb' }));
 const jobs = new Map();
 let jobQueue = Promise.resolve();
 
-function createJob({ idea, script, language, style = STYLE_FOOTAGE, backgroundType = null, query = null }) {
+function createJob({
+  idea,
+  script,
+  language,
+  style = STYLE_FOOTAGE,
+  backgroundType = null,
+  query = null,
+  captionStyle = CAPTION_STYLES.word,
+  timingMode = TIMING_MODES.auto,
+  wordsPerSegment = DEFAULT_WORDS_PER_SEGMENT,
+  emojis = true,
+}) {
   const id = crypto.randomUUID();
   const job = {
     id,
@@ -89,10 +113,16 @@ function createJob({ idea, script, language, style = STYLE_FOOTAGE, backgroundTy
     style,
     backgroundType,
     query: query || null,
+    captionStyle,
+    timingMode,
+    wordsPerSegment,
+    emojis,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     outputFile: null,
     outputUrl: null,
+    subtitleSrtUrl: null,
+    subtitleAssUrl: null,
     error: null,
     errorCode: null,
     estimatedDuration: null,
@@ -125,9 +155,15 @@ function publicJob(job) {
     style: job.style,
     backgroundType: job.backgroundType,
     query: job.query,
+    captionStyle: job.captionStyle,
+    timingMode: job.timingMode,
+    wordsPerSegment: job.wordsPerSegment,
+    emojis: job.emojis,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     outputUrl: job.outputUrl,
+    subtitleSrtUrl: job.subtitleSrtUrl,
+    subtitleAssUrl: job.subtitleAssUrl,
     error: job.error,
     errorCode: job.errorCode,
     estimatedDuration: job.estimatedDuration,
@@ -633,22 +669,6 @@ function deriveSceneQuery(text) {
   return deriveQuery(null, text || '');
 }
 
-function splitSentences(text) {
-  const out = [];
-  const re = /[^.!?؟…]*[.!?؟…]+/g;
-  let last = 0;
-  let m;
-  while ((m = re.exec(text))) {
-    out.push(text.slice(last, re.lastIndex).trim());
-    last = re.lastIndex;
-  }
-  if (last < text.length) {
-    const rest = text.slice(last).trim();
-    if (rest) out.push(rest);
-  }
-  return out.filter(Boolean);
-}
-
 /**
  * Split the TTS text into scenes aligned with the voice-over: one scene per
  * spoken sentence. Short sentences are merged into the previous scene and the
@@ -893,78 +913,13 @@ async function runTts(script, language, workDir) {
 }
 
 /* ------------------------------------------------------------------ */
-/* ASS subtitle generation                                              */
+/* Captions (app/captions.js)                                           */
+/*                                                                      */
+/* Word segmentation, the three caption styles and the .srt/.ass        */
+/* builders now live in app/captions.js (segmentCaptions / buildAss /   */
+/* buildSrt). This server only picks the style + position per tool and  */
+/* writes the resulting files.                                          */
 /* ------------------------------------------------------------------ */
-
-function toAssTime(sec) {
-  const c = Math.max(0, Math.round(sec * 100));
-  const cs = c % 100;
-  const s = Math.floor(c / 100) % 60;
-  const m = Math.floor(c / 6000) % 60;
-  const h = Math.floor(c / 360000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${h}:${p(m)}:${p(s)}.${p(cs)}`;
-}
-
-function cleanWord(raw) {
-  return raw
-    .replace(/^[^\p{L}\p{N}]+/u, '')
-    .replace(/[^\p{L}\p{N}]+$/u, '')
-    .trim();
-}
-
-function fontsizeFor(text) {
-  const len = Array.from(text).length;
-  const size = Math.round(1900 / Math.max(1, len));
-  return Math.max(48, Math.min(96, size));
-}
-
-/**
- * Build an ASS subtitle file with animated, word-by-word captions.
- * Each word becomes its own Dialogue event (contiguous so captions never
- * flicker), with a scale "pop" + fade animation. Single-word events keep
- * rendering robust for RTL (Arabic) scripts too.
- */
-function makeAss(timings, language, options = {}) {
-  const { y = CAPTION_Y.bottom } = options;
-  const font = FONTS[language] || FONTS.en;
-  const accent = language === 'ar' ? '\\1c&H47F7F0&' : '\\1c&H62C8FF&'; // subtle tint
-
-  const events = [];
-  for (let i = 0; i < timings.length; i++) {
-    const word = cleanWord(timings[i].word);
-    if (!word) continue;
-    const start = Math.max(0, timings[i].start);
-    const end = i + 1 < timings.length
-      ? Math.max(timings[i].end, timings[i + 1].start)
-      : timings[i].end + 0.35;
-    const size = fontsizeFor(word);
-    const fade = 90;
-    const pop = `\\t(0,130,\\fscx100\\fscy100)`;
-    const text = `{\\pos(540,${y})\\an5\\fs${size}\\fscx80\\fscy80\\fad(${fade},${fade})${pop}${accent}}${word}`;
-    events.push(
-      `Dialogue: 0,${toAssTime(start)},${toAssTime(end)},Karaoke,,0,0,0,,${text}`
-    );
-  }
-
-  return [
-    '[Script Info]',
-    'ScriptType: v4.00+',
-    'PlayResX: 1080',
-    'PlayResY: 1920',
-    'WrapStyle: 0',
-    'ScaledBorderAndShadow: yes',
-    '',
-    '[V4+ Styles]',
-    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Karaoke,${font},70,&H00FFFFFF,&H00000000,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,5,2,5,60,60,60,1`,
-    '',
-    '[Events]',
-    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-    ...events,
-    '',
-  ].join('\n');
-}
 
 /* ------------------------------------------------------------------ */
 /* FFmpeg render                                                        */
@@ -1176,7 +1131,10 @@ async function processJob(job) {
   updateJob(job.id, { status: 'processing' });
   const workDir = path.join(WORK_DIR, job.id);
   await fsp.mkdir(workDir, { recursive: true });
-  console.log(`[job ${job.id}] start style=${job.style} bg=${job.backgroundType || 'auto'}`);
+  console.log(
+    `[job ${job.id}] start style=${job.style} bg=${job.backgroundType || 'auto'} ` +
+    `captions=${job.captionStyle} timing=${job.timingMode} wps=${job.wordsPerSegment} emojis=${job.emojis}`
+  );
 
   try {
     let script = job.script;
@@ -1188,17 +1146,24 @@ async function processJob(job) {
         e.code = 'gemini_not_configured';
         throw e;
       }
-      script = await generateScript(
-        job.idea,
-        job.language,
-        job.style === STYLE_EMOJI
-      );
+      const isFootageStyle = job.style === STYLE_FOOTAGE;
+      const withEmojis =
+        job.style === STYLE_EMOJI || (job.style === STYLE_SUBTITLES && job.emojis);
+      script = await generateScript(job.idea, job.language, withEmojis && !isFootageStyle);
       updateJob(job.id, { script });
     }
 
-    const style = job.style === STYLE_EMOJI ? STYLE_EMOJI : STYLE_FOOTAGE;
+    const style =
+      job.style === STYLE_FOOTAGE
+        ? STYLE_FOOTAGE
+        : job.style === STYLE_SUBTITLES
+          ? STYLE_SUBTITLES
+          : STYLE_EMOJI;
+    const isFootage = style === STYLE_FOOTAGE;
+    const wantsEmojis =
+      style === STYLE_EMOJI || (style === STYLE_SUBTITLES && job.emojis !== false);
 
-    if (style === STYLE_EMOJI) {
+    if (wantsEmojis) {
       // Guarantee emojis are present even for user-typed scripts.
       const withEmojis = await ensureEmojis(script, job.language);
       if (withEmojis !== script) {
@@ -1239,12 +1204,11 @@ async function processJob(job) {
       throw e;
     }
 
-    const emojiGroups =
-      style === STYLE_EMOJI ? associateEmojis(script, timings) : [];
+    const emojiGroups = wantsEmojis ? associateEmojis(script, timings) : [];
 
     let backgrounds = [];
     let scenes = [];
-    if (style === STYLE_FOOTAGE) {
+    if (isFootage) {
       scenes = splitIntoScenes(cleanScript, timings);
       if (!scenes.length) {
         scenes = [{ text: cleanScript, start: 0, end: duration }];
@@ -1267,15 +1231,28 @@ async function processJob(job) {
       scenes = [{ text: cleanScript, start: 0, end: duration }];
     }
 
-    const assContent =
-      style === STYLE_EMOJI
-        ? makeAss(timings, job.language, { y: CAPTION_Y.center })
-        : makeAss(timings, job.language, { y: CAPTION_Y.bottom });
+    // Caption segmentation + styles. Footage tool always uses Word-by-Word
+    // captions pinned to the bottom; the Subtitles tool lets the user pick
+    // style, timing mode and words-per-segment (centered).
+    const captionStyle = isFootage
+      ? CAPTION_STYLES.word
+      : CAPTION_STYLES[job.captionStyle] || CAPTION_STYLES.word;
+    const captionY = isFootage ? CAPTION_Y.bottom : CAPTION_Y.center;
+    const segments = segmentCaptions(timings, cleanScript, {
+      timingMode: isFootage ? TIMING_MODES.auto : job.timingMode,
+      wordsPerSegment: job.wordsPerSegment,
+      duration,
+    });
+    const assContent = buildAss(segments, job.language, {
+      style: captionStyle,
+      y: captionY,
+      font: FONTS[job.language] || FONTS.en,
+    });
     const assPath = path.join(workDir, 'subs.ass');
     await fsp.writeFile(assPath, assContent, 'utf-8');
 
     const emojiOverlays = [];
-    if (style === STYLE_EMOJI) {
+    if (wantsEmojis) {
       for (let i = 0; i < emojiGroups.length; i++) {
         const group = emojiGroups[i];
         if (!group.length) continue;
@@ -1314,14 +1291,29 @@ async function processJob(job) {
       emojiOverlays,
     });
 
+    // Downloadable subtitle files (style-independent .srt + styled .ass).
+    await fsp.copyFile(assPath, path.join(OUTPUT_DIR, `${job.id}.ass`));
+    await fsp.writeFile(
+      path.join(OUTPUT_DIR, `${job.id}.srt`),
+      buildSrt(segments),
+      'utf-8'
+    );
+
     updateJob(job.id, {
       status: 'completed',
       outputFile,
       outputUrl: `/api/outputs/${outputFile}`,
+      subtitleSrtUrl: `/api/outputs/${job.id}.srt`,
+      subtitleAssUrl: `/api/outputs/${job.id}.ass`,
       meta: {
         style,
-        backgroundType:
-          style === STYLE_EMOJI ? 'solid' : job.backgroundType || BG_TYPES.video,
+        backgroundType: isFootage
+          ? job.backgroundType || BG_TYPES.video
+          : 'solid',
+        captionStyle,
+        timingMode: isFootage ? TIMING_MODES.auto : job.timingMode,
+        wordsPerSegment: isFootage ? null : job.wordsPerSegment,
+        emojis: wantsEmojis,
         sceneCount: scenes.length,
         scenes: scenes.map((s, i) => ({
           text: s.text,
@@ -1412,7 +1404,7 @@ app.post('/api/generate', (req, res) => {
     });
   }
 
-  const job = createJob({ idea, script, language: lang });
+  const job = createJob({ idea, script, language: lang, style: STYLE_EMOJI });
   enqueue(job);
   res.status(202).json({ job: publicJob(job) });
 });
@@ -1455,6 +1447,30 @@ app.post('/api/generate/emoji', (req, res) => {
   res.status(202).json({ job: publicJob(job) });
 });
 
+app.post('/api/generate/subtitles', (req, res) => {
+  const v = validateGenerateBody(req, res);
+  if (!v) return;
+  const b = req.body || {};
+  const captionStyle = CAPTION_STYLES[b.captionStyle] || CAPTION_STYLES.word;
+  const timingMode = TIMING_MODES[b.timingMode] || TIMING_MODES.auto;
+  const wpsRaw = parseInt(b.wordsPerSegment, 10);
+  const wordsPerSegment = Number.isFinite(wpsRaw)
+    ? Math.max(1, Math.min(12, wpsRaw))
+    : DEFAULT_WORDS_PER_SEGMENT;
+  const job = createJob({
+    idea: v.idea,
+    script: v.script,
+    language: v.language,
+    style: STYLE_SUBTITLES,
+    captionStyle,
+    timingMode,
+    wordsPerSegment,
+    emojis: b.emojis !== false,
+  });
+  enqueue(job);
+  res.status(202).json({ job: publicJob(job) });
+});
+
 app.post('/api/generate/footage', (req, res) => {
   const v = validateGenerateBody(req, res);
   if (!v) return;
@@ -1488,14 +1504,20 @@ app.post('/api/generate-script', async (req, res) => {
 
 app.get('/api/outputs/:file', (req, res) => {
   const file = path.basename(req.params.file);
-  if (file !== req.params.file || !/^[a-zA-Z0-9._-]+\.mp4$/.test(file)) {
+  if (file !== req.params.file || !/^[a-zA-Z0-9._-]+\.(mp4|srt|ass)$/.test(file)) {
     return res.status(400).json({ error: 'invalid_file' });
   }
   const full = path.join(OUTPUT_DIR, file);
   if (!fs.existsSync(full)) {
     return res.status(404).json({ error: 'file_not_found' });
   }
-  res.setHeader('Content-Type', 'video/mp4');
+  const ext = path.extname(file).toLowerCase();
+  const types = {
+    '.mp4': 'video/mp4',
+    '.srt': 'application/x-subrip',
+    '.ass': 'text/plain; charset=utf-8',
+  };
+  res.setHeader('Content-Type', types[ext] || 'application/octet-stream');
   res.sendFile(full);
 });
 
