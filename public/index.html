@@ -44,6 +44,21 @@
     .row { display: flex; gap: 12px; }
     .row > div { flex: 1; }
     .btns { display: flex; gap: 12px; margin-top: 18px; }
+    .segmented { display: flex; gap: 8px; background: #0f1220; border: 1px solid #2a2f4a; border-radius: 10px; padding: 4px; }
+    .seg {
+      flex: 1;
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      background: transparent;
+      color: #8b90a5;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .seg.active { background: #62c8ff; color: #08131c; }
+    .hidden { display: none; }
     button {
       flex: 1;
       border: none;
@@ -122,6 +137,23 @@
         <option value="en">English</option>
         <option value="ar">Arabic (RTL)</option>
       </select>
+
+      <label>Video style</label>
+      <div class="segmented" id="modeSeg">
+        <button class="seg active" data-mode="emoji" type="button">Emoji captions</button>
+        <button class="seg" data-mode="footage" type="button">Footage background</button>
+      </div>
+
+      <div id="footageOpts" class="hidden">
+        <label for="bgType">Background</label>
+        <select id="bgType">
+          <option value="video">Videos (Pexels)</option>
+          <option value="image">Photos (Pexels)</option>
+          <option value="icon">Icons (Iconify)</option>
+        </select>
+        <label for="bgQuery">Footage search <span class="hint">(optional — auto-derived from the idea/script)</span></label>
+        <input id="bgQuery" type="text" placeholder="e.g. cooking, nature, travel…" />
+      </div>
 
       <div class="btns">
         <button class="primary" id="generate" type="button">Generate video</button>
@@ -202,11 +234,18 @@
       errorEl.textContent = '';
       resultCard.classList.remove('visible');
       setStatus('Queued', 0.05, 'Submitting job…');
+      const isFootage = currentMode === 'footage';
+      const body = { idea, script: script || undefined, language };
+      if (isFootage) {
+        body.background = $('bgType').value;
+        const q = $('bgQuery').value.trim();
+        if (q) body.query = q;
+      }
       try {
-        const res = await fetch('/api/generate', {
+        const res = await fetch(isFootage ? '/api/generate/footage' : '/api/generate/emoji', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ idea, script: script || undefined, language }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -218,6 +257,15 @@
       } catch (e) {
         setError('Network error: ' + e.message);
       }
+    });
+
+    let currentMode = 'emoji';
+    $('modeSeg').addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg');
+      if (!btn) return;
+      currentMode = btn.dataset.mode;
+      $('modeSeg').querySelectorAll('.seg').forEach((b) => b.classList.toggle('active', b === btn));
+      $('footageOpts').classList.toggle('hidden', currentMode !== 'footage');
     });
 
     $('genScript').addEventListener('click', async () => {
