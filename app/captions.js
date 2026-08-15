@@ -22,6 +22,15 @@ const ASS_ACCENT = { en: '&H62C8FF&', ar: '&H47F7F0&' };
 const ASS_DIM = '&H6A6A6A&';
 const ASS_WHITE = '&HFFFFFF&';
 
+// Long sentences are split into captions of at most this many words so a
+// single caption stays readable on a narrow phone screen.
+const MAX_SENTENCE_WORDS = 9;
+
+// Display lines are wrapped to at most this many visible characters; the
+// sentence font size is derived from this same budget so a wrapped line
+// always fits the screen at a comfortably large size.
+const LINE_MAX_CHARS = 20;
+
 /* ------------------------------------------------------------------ */
 /* Time / text helpers                                                 */
 /* ------------------------------------------------------------------ */
@@ -77,19 +86,34 @@ function splitSentences(text) {
 /** Single-word font size (used by the Word-by-Word style). */
 function fontsizeFor(text) {
   const len = Array.from(text).length;
-  const size = Math.round(1900 / Math.max(1, len));
-  return Math.max(48, Math.min(96, size));
+  const size = Math.round(2375 / Math.max(1, len));
+  return Math.max(60, Math.min(120, size));
 }
 
-/** Sentence font size — scales with the full line length. */
+/**
+ * Sentence font size — big enough to read on a phone. Derived from the
+ * longest display line (after wrapping to LINE_MAX_CHARS), so a full line
+ * never overflows the 1080px canvas and the type stays large.
+ */
 function sentenceSize(tokens) {
-  const len = Array.from(tokens.join(' ')).length;
-  const size = Math.round(1700 / Math.max(1, len));
-  return Math.max(40, Math.min(84, size));
+  let maxLine = 0;
+  let cur = 0;
+  for (const t of tokens) {
+    const L = Array.from(t).length + (cur ? 1 : 0);
+    if (cur && cur + L > LINE_MAX_CHARS) {
+      if (cur > maxLine) maxLine = cur;
+      cur = Array.from(t).length;
+    } else {
+      cur += L;
+    }
+  }
+  if (cur > maxLine) maxLine = cur;
+  const size = Math.round(1800 / Math.max(1, maxLine));
+  return Math.max(60, Math.min(110, size));
 }
 
 /** Wrap word tokens into display lines (ASS hard breaks). */
-function splitLines(words, maxChars = 26) {
+function splitLines(words, maxChars = LINE_MAX_CHARS) {
   const lines = [];
   let cur = '';
   for (const w of words) {
@@ -248,7 +272,14 @@ function sentenceChunks(words, text) {
     }
   }
   if (k < words.length) chunks.push(words.slice(k));
-  return chunks.filter((c) => c.length);
+  // Hard cap: any caption longer than MAX_SENTENCE_WORDS is split again so
+  // it always stays readable on a phone (even if the model wrote one long
+  // run-on sentence).
+  return chunks
+    .flatMap((c) =>
+      c.length > MAX_SENTENCE_WORDS ? chunkByCount(c, MAX_SENTENCE_WORDS) : [c]
+    )
+    .filter((c) => c.length);
 }
 
 function chunkByCount(words, n) {
@@ -321,6 +352,26 @@ function highlightSentenceEvents(seg, language, y) {
   const tokens = words.map((w) => w.text);
   const size = sentenceSize(tokens);
   const accent = ASS_ACCENT[language] || ASS_ACCENT.en;
+  const isAr = language === 'ar';
+  // Break the words into display lines (LINE_MAX_CHARS visible chars each) so
+  // the full sentence always fits the screen at the larger font size.
+  const lines = [];
+  {
+    let cur = [];
+    let chars = 0;
+    for (const tok of tokens) {
+      const L = Array.from(tok).length + (cur.length ? 1 : 0);
+      if (cur.length && chars + L > LINE_MAX_CHARS) {
+        lines.push(cur);
+        cur = [tok];
+        chars = Array.from(tok).length;
+      } else {
+        cur.push(tok);
+        chars += L;
+      }
+    }
+    if (cur.length) lines.push(cur);
+  }
   const out = [];
   for (let k = 0; k < n; k++) {
     const start = words[k].start;
@@ -329,11 +380,21 @@ function highlightSentenceEvents(seg, language, y) {
     // Color-only highlight: changing \1c never reflows the line, so the
     // active word is tinted without the whole sentence shifting (the RTL
     // Arabic layout-shift bug). No \fscx / \t scale is allowed here.
-    const joined = tokens
-      .map((t, j) =>
-        j === k ? `{\\1c${accent}}${t}` : `{\\1c${ASS_DIM}}${t}`
-      )
-      .join(' ');
+    let idx = 0;
+    const joined = lines
+      .map((group) => {
+        const parts = group.map((tok) => {
+          const gi = idx++;
+          return gi === k ? `{\\1c${accent}}${tok}` : `{\\1c${ASS_DIM}}${tok}`;
+        });
+        // Arabic: libass lays every line out left-to-right (no bidi), so we
+        // reverse the words of each display line. Combined with the
+        // right-to-left reading direction the result reads correctly, and
+        // the highlight travels right-to-left word by word.
+        if (isAr) parts.reverse();
+        return parts.join(' ');
+      })
+      .join('\\N');
     out.push(eventLine(start, end, leadingTags(y, size, fade) + joined));
   }
   return out;

@@ -1455,7 +1455,7 @@ app.post('/api/generate/subtitles', (req, res) => {
   const timingMode = TIMING_MODES[b.timingMode] || TIMING_MODES.auto;
   const wpsRaw = parseInt(b.wordsPerSegment, 10);
   const wordsPerSegment = Number.isFinite(wpsRaw)
-    ? Math.max(1, Math.min(12, wpsRaw))
+    ? Math.max(1, Math.min(10, wpsRaw))
     : DEFAULT_WORDS_PER_SEGMENT;
   const job = createJob({
     idea: v.idea,
