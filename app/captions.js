@@ -12,8 +12,10 @@
 /*   progressive — Progressive Word Delivery: words accumulate until   */
 /*                 the sentence is complete, then it rolls over.       */
 /*                                                                     */
-/* Timing: word-level millisecond timestamps when available, otherwise */
-/*   a fixed "N words per caption" fallback.                            */
+/* Timing: word-level timestamps are aligned to the script text by matching
+ *   normalized word keys (never by array index), then smoothed into short,
+ *   regular-looking windows. When too few words match, each sentence is
+ *   split evenly across its own span instead. */
 /* ------------------------------------------------------------------ */
 
 const ASS_ACCENT = { en: '&H62C8FF&', ar: '&H47F7F0&' };
@@ -104,38 +106,134 @@ function splitLines(words, maxChars = 26) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Segmentation                                                        */
+/* Segmentation + word timing alignment                                */
 /* ------------------------------------------------------------------ */
 
+// A word stays visible for at most this long in Word-by-Word mode so the
+// caption never lingers through a pause, and at least this long so quick
+// words do not flash by.
+const MAX_WORD_WINDOW = 0.8;
+const MIN_WORD_WINDOW = 0.12;
+
+/** Canonical key for matching script tokens against TTS word timings. */
+function timingKey(raw) {
+  return String(raw || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0670\u0640]/g, '')
+    .replace(/[\p{P}\p{S}]+/gu, '')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
 /**
- * Build per-word entries `{ text, start, end }`.
- * Uses millisecond word-level timestamps when the TTS engine provided
- * enough of them; otherwise falls back to an even split across the
- * audio duration (or a words-per-second estimate).
+ * Align TTS word timings to the script tokens by matching normalized word
+ * keys in order (like associateEmojis does for emoji groups). Tolerates
+ * punctuation/contraction differences and extra/missing timing words.
+ * Returns `{ words, matched }` where `words` is an array aligned 1:1 with
+ * `tokens` (missing entries interpolated) and `matched` is the count of
+ * tokens that had a real timing. Returns null when nothing matched.
+ */
+function alignTimings(timings, tokens) {
+  if (!Array.isArray(timings) || !timings.length) return null;
+  const words = tokens.map((text) => ({ text, start: 0, end: 0, _matched: false }));
+  let j = 0;
+  let matched = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const key = timingKey(tokens[i]);
+    if (!key) continue;
+    let found = -1;
+    for (let s = j; s < timings.length; s++) {
+      if (timingKey(timings[s].word) === key) {
+        found = s;
+        break;
+      }
+    }
+    if (found === -1) continue;
+    const t = timings[found];
+    const start = Math.max(0, typeof t.start === 'number' ? t.start : 0);
+    const end =
+      typeof t.end === 'number' ? Math.max(t.end, start) : start + 0.3;
+    words[i] = { text: tokens[i], start, end, _matched: true };
+    j = found + 1;
+    matched++;
+  }
+  if (!matched) return null;
+
+  // Interpolate tokens that had no timing between their nearest matched
+  // neighbours so every word still gets a window.
+  const matchedIdx = words.map((w, i) => (w._matched ? i : -1)).filter((i) => i >= 0);
+  for (let i = 0; i < words.length; i++) {
+    if (words[i]._matched) continue;
+    const prevIdx = matchedIdx.filter((x) => x < i).pop();
+    const nextIdx = matchedIdx.find((x) => x > i);
+    if (prevIdx !== undefined && nextIdx !== undefined) {
+      const a = words[prevIdx].start;
+      const b = words[nextIdx].start;
+      const gap = (b - a) / (nextIdx - prevIdx);
+      words[i].start = a + gap * (i - prevIdx);
+      words[i].end = words[i].start + gap;
+    } else if (prevIdx !== undefined) {
+      words[i].start = words[prevIdx].end;
+      words[i].end = words[i].start + 0.3;
+    } else if (nextIdx !== undefined) {
+      words[i].end = words[nextIdx].start - 0.3 * (nextIdx - i - 1);
+      words[i].start = Math.max(0, words[i].end - 0.3);
+    } else {
+      words[i].start = 0;
+      words[i].end = 0.3;
+    }
+  }
+
+  // Enforce monotonic, non-overlapping starts.
+  let prev = -Infinity;
+  for (const w of words) {
+    if (w.start < prev) w.start = prev;
+    if (w.end < w.start) w.end = w.start;
+    prev = w.start;
+  }
+  return { words, matched };
+}
+
+/** Even-split each sentence across its own proportional span. */
+function evenSplitBySentence(tokens, duration) {
+  const sents = splitSentences(tokens.join(' '));
+  const counts = sents.map((s) => tokenizeWords(s).length).filter((c) => c > 0);
+  const total = counts.reduce((a, b) => a + b, 0);
+
+  const words = [];
+  let t0 = 0;
+  let k = 0;
+  for (const wc of counts) {
+    const t1 = k + wc >= tokens.length ? duration : t0 + (duration * wc) / total;
+    const step = wc ? (t1 - t0) / wc : 0;
+    for (let j = 0; j < wc && k < tokens.length; j++, k++) {
+      words.push({ text: tokens[k], start: t0 + j * step, end: t0 + (j + 1) * step });
+    }
+    t0 = t1;
+  }
+  while (k < tokens.length) {
+    words.push({ text: tokens[k], start: t0, end: t0 + 0.3 });
+    t0 += 0.3;
+    k++;
+  }
+  return words;
+}
+
+/**
+ * Build per-word entries `{ text, start, end }`. Uses the TTS word timings
+ * aligned to the script text when at least 70% of words matched; otherwise
+ * falls back to an even split per sentence across the audio duration (or a
+ * words-per-second estimate).
  */
 function buildWordList(timings, tokens, opts) {
   const n = tokens.length;
-  const hasTimings =
-    Array.isArray(timings) &&
-    timings.length >= n &&
-    timings.every((t) => t && typeof t.start === 'number');
-
-  if (hasTimings) {
-    return Array.from({ length: n }, (_, i) => ({
-      text: tokens[i],
-      start: Math.max(0, timings[i].start),
-      end: timings[i].end != null ? timings[i].end : timings[i].start + 0.3,
-    }));
-  }
-
+  if (!n) return [];
+  const aligned = alignTimings(timings, tokens);
+  if (aligned && aligned.matched / n >= 0.7) return aligned.words;
   const duration =
-    opts.duration || n / (opts.wordsPerSecond || 2.6);
-  const step = duration / n;
-  return tokens.map((t, i) => ({
-    text: t,
-    start: i * step,
-    end: (i + 1) * step,
-  }));
+    opts.duration > 0 ? opts.duration : n / (opts.wordsPerSecond || 2.6);
+  return evenSplitBySentence(tokens, duration);
 }
 
 function sentenceChunks(words, text) {
@@ -200,17 +298,22 @@ function wordByWordEvents(seg, y) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const start = w.start;
-    const end = i + 1 < words.length ? words[i + 1].start : seg.end;
+    const nextStart = i + 1 < words.length ? words[i + 1].start : seg.end;
+    // Start exactly when the word is spoken; hold it for a smoothed window
+    // (capped so it never lingers through a pause, floored so it never
+    // flashes) instead of staying up for the full raw gap.
+    const clamped = Math.min(nextStart, start + MAX_WORD_WINDOW);
+    const end = Math.max(clamped, Math.min(nextStart, start + MIN_WORD_WINDOW));
     const size = fontsizeFor(w.text);
     const pop = '\\t(0,110,\\fscx100\\fscy100)';
     const text =
-      leadingTags(y, size, `\\fscx75\\fscy75\\fad(50,50)${pop}`) + w.text;
+      leadingTags(y, size, `\\fscx75\\fscy75\\fad(40,40)${pop}`) + w.text;
     out.push(eventLine(start, end, text));
   }
   return out;
 }
 
-/** Style 2 — Highlighted Sentence: full line, active word tinted+popped. */
+/** Style 2 — Highlighted Sentence: full line, active word tinted only. */
 function highlightSentenceEvents(seg, language, y) {
   const words = seg.words;
   const n = words.length;
@@ -222,12 +325,13 @@ function highlightSentenceEvents(seg, language, y) {
   for (let k = 0; k < n; k++) {
     const start = words[k].start;
     const end = k + 1 < n ? words[k + 1].start : seg.end;
-    const fade = k === 0 ? '\\fad(140,0)' : k === n - 1 ? '\\fad(0,140)' : '';
+    const fade = k === 0 ? '\\fad(60,0)' : k === n - 1 ? '\\fad(0,60)' : '';
+    // Color-only highlight: changing \1c never reflows the line, so the
+    // active word is tinted without the whole sentence shifting (the RTL
+    // Arabic layout-shift bug). No \fscx / \t scale is allowed here.
     const joined = tokens
       .map((t, j) =>
-        j === k
-          ? `{\\1c${accent}\\fscx115\\fscy115\\t(0,90,\\fscx100\\fscy100)}${t}`
-          : `{\\1c${ASS_DIM}\\fscx100\\fscy100}${t}`
+        j === k ? `{\\1c${accent}}${t}` : `{\\1c${ASS_DIM}}${t}`
       )
       .join(' ');
     out.push(eventLine(start, end, leadingTags(y, size, fade) + joined));
@@ -247,8 +351,8 @@ function progressiveEvents(seg, y) {
     const start = words[k].start;
     const end = k + 1 < n ? words[k + 1].start : seg.end;
     const shown = tokens.slice(0, k + 1);
-    const fadeIn = k === 0 ? '\\fad(140,0)' : '\\fad(70,70)';
-    const fadeOut = k === n - 1 ? '\\fad(70,140)' : '';
+    const fadeIn = k === 0 ? '\\fad(60,0)' : '\\fad(40,40)';
+    const fadeOut = k === n - 1 ? '\\fad(40,120)' : '';
     out.push(
       eventLine(start, end, leadingTags(y, size, `${fadeIn}${fadeOut}`) + splitLines(shown))
     );
