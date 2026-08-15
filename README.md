@@ -12,10 +12,15 @@ Give it a one-line idea (or a full script), and it produces a ready-to-post
   one-line idea using Google Gemini (or pass your own script directly).
 - **Two video styles**:
   - **Emoji captions** — captions centered on a dark gradient with color emojis
-    baked into the script (Gemini suggests them automatically).
+    baked into the script (Gemini suggests them automatically; emojis are
+    auto-inserted when the script lacks them).
   - **Footage background** — captions near the bottom over real b-roll, with three
     background options: **videos**, **photos** (both via the Pexels API), or
     **animated icons** (via Iconify).
+- **Multi-scene footage** — long scripts are split into scenes (one per sentence)
+  and each scene gets its own footage clip/photo/icon; scenes crossfade into each
+  other. Icons are auto-picked per scene from the text (keyword map + Iconify
+  search), including Arabic.
 - **Neural TTS** — high-quality voice-over via Microsoft Edge neural voices
   (`edge-tts`), with English and Arabic out of the box.
 - **Animated word-by-word captions** — every word pops and fades in sync with the
@@ -111,7 +116,8 @@ Legacy endpoint — same behavior as `/api/generate/emoji`.
 
 Create a **emoji captions** job: captions centered on a dark gradient, with color
 emojis rendered beside the words they follow. Provide **either** an `idea` (Gemini
-writes the script) **or** a `script`.
+writes the script) **or** a `script`. If the resulting script has no emojis, they
+are added automatically (Gemini first, keyword-based fallback).
 
 ```sh
 curl -X POST http://localhost:8283/api/generate/emoji \
@@ -138,6 +144,11 @@ curl -X POST http://localhost:8283/api/generate/footage \
 
 Video/image backgrounds require `PEXELS_API_KEY`; without it the job fails with
 `pexels_not_configured`.
+
+When a script has multiple sentences, the footage is split into **scenes** (one per
+sentence, up to 6) and each scene gets its own clip/photo/icon, joined by
+crossfades. `meta.sceneCount` and `meta.scenes[]` (`text`, `query`, `source`,
+`icon`, `url`) describe the split.
 
 ### `GET /api/jobs/:id`
 

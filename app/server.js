@@ -53,6 +53,10 @@ const MAX_SCRIPT_SECONDS = 60;
 const WORDS_PER_SECOND = { en: 2.6, ar: 1.6 }; // words/sec typical voice-over pace
 const TRAIL_PADDING = 0.6;
 
+const MAX_SCENES = 6;
+const SCENE_MIN_SECONDS = 1.4;
+const SCENE_TRANSITION = 0.4; // crossfade duration between scenes (s)
+
 const VOICES = {
   en: 'en-US-AriaNeural',
   ar: 'ar-SA-HamedNeural',
@@ -207,18 +211,21 @@ async function fetchText(url, headers = {}) {
   return res.text();
 }
 
-async function downloadFile(url, destPath, timeoutMs = 120000) {
-  let res;
-  try {
-    res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  } catch (err) {
-    const e = new Error(`Download failed: ${err.message}`);
-    e.code = 'download_error';
-    throw e;
+async function downloadFile(url, destPath, timeoutMs = 240000) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await fsp.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+      return destPath;
+    } catch (err) {
+      if (attempt === 2) {
+        const e = new Error(`Download failed: ${err.message}`);
+        e.code = 'download_error';
+        throw e;
+      }
+    }
   }
-  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
-  await fsp.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
-  return destPath;
 }
 
 /* ------------------------------------------------------------------ */
@@ -316,6 +323,103 @@ async function fetchEmojiPng(emoji) {
   return null;
 }
 
+/* Ensure emoji-mode scripts always carry emojis: keep existing ones, ask
+ * Gemini to sprinkle some in, and fall back to a keyword map so emojis are
+ * guaranteed even for user-typed scripts. */
+const EMOJI_KEYWORDS = {
+  cook: '🍳', food: '🍳', egg: '🥚', kitchen: '🍳', bake: '🧁', coffee: '☕',
+  travel: '✈️', trip: '✈️', flight: '✈️', journey: '✈️', vacation: '🏖️',
+  ocean: '🌊', sea: '🌊', beach: '🏖️', nature: '🌿', tree: '🌳', plant: '🌱', forest: '🌲',
+  sun: '☀️', star: '⭐', moon: '🌙', sky: '✨', rainbow: '🌈',
+  love: '❤️', heart: '❤️', fire: '🔥', hot: '🔥', energy: '⚡', power: '⚡',
+  money: '💰', cash: '💰', finance: '💰', invest: '💰', rich: '💎', diamond: '💎',
+  rocket: '🚀', launch: '🚀', idea: '💡', genius: '🧠', brain: '🧠',
+  learn: '📚', book: '📚', study: '📚', school: '🎓',
+  music: '🎵', song: '🎵', movie: '🎬', film: '🎬', fun: '🎉', celebrate: '🎉', party: '🎉',
+  cat: '🐱', dog: '🐶', pet: '🐾', animal: '🐾', bird: '🐦',
+  car: '🚗', drive: '🚗', fast: '🏎️', race: '🏁',
+  phone: '📱', app: '📱', tech: '💻', computer: '💻', code: '💻', robot: '🤖', ai: '🤖',
+  sport: '🏃', run: '🏃', fitness: '💪', workout: '💪', gym: '💪', health: '💪', strong: '💪',
+  flower: '🌸', garden: '🌷', photo: '📸', camera: '📸', gift: '🎁', surprise: '🎁',
+  perfect: '💯', amazing: '🤩', awesome: '🤩', wow: '🤩', easy: '✅', sleep: '😴', dream: '💭',
+  laugh: '😂', happy: '😄', sad: '😢', angry: '😡', afraid: '😱', cry: '😭', smile: '😊',
+};
+
+function insertEmojisByKeyword(script) {
+  const lower = script.toLowerCase();
+  const hits = [];
+  for (const [key, emoji] of Object.entries(EMOJI_KEYWORDS)) {
+    if (lower.includes(key)) hits.push(emoji);
+    if (hits.length >= 5) break;
+  }
+  if (!hits.length) hits.push('✨', '🔥', '💯');
+  const sentences = script.split(/(?<=[.!?؟…])/u);
+  let out = '';
+  let hi = 0;
+  for (const s of sentences) {
+    if (!s.trim()) { out += s; continue; }
+    const emoji = hits[hi % hits.length];
+    hi++;
+    if (/[.!?؟…]$/u.test(s)) {
+      out += s.replace(/([.!?؟…])$/u, ` ${emoji}$1`);
+    } else {
+      out += `${s} ${emoji}`;
+    }
+  }
+  return out;
+}
+
+async function addEmojisViaGemini(script, language) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+  const prompt =
+    'Insert 3-5 relevant emojis into the following voice-over script at natural points ' +
+    '(after sentences or next to keywords). Do NOT change, add, or remove any words or ' +
+    'punctuation marks other than inserting emoji characters. Return ONLY the modified script.';
+  const body = {
+    systemInstruction: {
+      parts: [{ text: 'You add emojis to short-form voice-over scripts.' }],
+    },
+    contents: [{ role: 'user', parts: [{ text: `${prompt}\n\nScript:\n${script}` }] }],
+  };
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch (err) {
+    const e = new Error(`Gemini request failed: ${err.message}`);
+    e.code = 'gemini_error';
+    throw e;
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = data && data.error && data.error.message ? data.error.message : `HTTP ${res.status}`;
+    const e = new Error(`Gemini error: ${msg}`);
+    e.code = 'gemini_error';
+    throw e;
+  }
+  const text =
+    data && data.candidates && data.candidates[0]
+    && data.candidates[0].content && data.candidates[0].content.parts
+      ? data.candidates[0].content.parts.map((p) => p.text || '').join('').trim()
+      : '';
+  return text;
+}
+
+async function ensureEmojis(script, language) {
+  if (EMOJI_GROUP_RE.test(script)) return script;
+  if (GEMINI_API_KEY) {
+    try {
+      const text = await addEmojisViaGemini(script, language);
+      if (text && EMOJI_GROUP_RE.test(text)) return text.trim();
+    } catch (_) { /* fall through to keyword insertion */ }
+  }
+  return insertEmojisByKeyword(script);
+}
+
 /* ------------------------------------------------------------------ */
 /* Background fetching (Pexels / Iconify)                               */
 /* ------------------------------------------------------------------ */
@@ -335,13 +439,14 @@ function deriveQuery(idea, script) {
   return keywords.slice(0, 3).join(' ');
 }
 
-async function pexelsPickVideo(query, workDir) {
+async function pexelsPickVideo(query, workDir, opts = {}) {
+  const { index = 0, usedLinks = new Set() } = opts;
   const data = await fetchJson(
-    `${PEXELS_VIDEO_SEARCH}?query=${encodeURIComponent(query)}&orientation=portrait&per_page=5&size=medium`,
+    `${PEXELS_VIDEO_SEARCH}?query=${encodeURIComponent(query)}&orientation=portrait&per_page=12&size=medium`,
     { Authorization: PEXELS_API_KEY }
   );
   const videos = (data && data.videos) || [];
-  const video = videos.find((v) =>
+  const usable = videos.filter((v) =>
     (v.video_files || []).some(
       (f) =>
         f.file_type === 'video/mp4' &&
@@ -349,7 +454,16 @@ async function pexelsPickVideo(query, workDir) {
         (f.height || 0) > 0 &&
         f.width < f.height
     )
-  ) || videos[0];
+  );
+  const pool = usable.length ? usable : videos;
+  const fresh = pool.filter((v) => {
+    const files = (v.video_files || []).filter(
+      (f) => f.file_type === 'video/mp4' && f.width < f.height
+    );
+    return files.length && !usedLinks.has(files[0].link);
+  });
+  const video =
+    (fresh.length ? fresh : pool)[index % Math.max(fresh.length || pool.length, 1)] || null;
   if (!video) {
     const e = new Error('Pexels returned no videos for the query');
     e.code = 'pexels_error';
@@ -357,36 +471,47 @@ async function pexelsPickVideo(query, workDir) {
   }
   const files = (video.video_files || []).filter(
     (f) => f.file_type === 'video/mp4' && f.width < f.height
-  ).sort((a, b) => (b.width || 0) - (a.width || 0));
-  const chosen = files.find((f) => (f.width || 0) >= 640) || files[files.length - 1];
+  );
+  // Prefer a portrait file near 1080px wide; avoid 4K downloads/encodes.
+  const nearHd = files.filter((f) => (f.width || 0) >= 720 && (f.width || 0) <= 1280)
+    .sort((a, b) => (a.width || 0) - (b.width || 0));
+  const anyOk = files.filter((f) => (f.width || 0) >= 640)
+    .sort((a, b) => (a.width || 0) - (b.width || 0));
+  const chosen = nearHd[0] || anyOk[0] || files[files.length - 1];
   if (!chosen || !chosen.link) {
     const e = new Error('Pexels video has no usable mp4 file');
     e.code = 'pexels_error';
     throw e;
   }
-  const dest = path.join(workDir, 'bg.mp4');
+  const dest = path.join(workDir, `bg_${index}.mp4`);
   await downloadFile(chosen.link, dest);
+  usedLinks.add(chosen.link);
   return { file: dest, type: BG_TYPES.video, source: 'pexels-video', url: chosen.link };
 }
 
-async function pexelsPickPhoto(query, workDir) {
+async function pexelsPickPhoto(query, workDir, opts = {}) {
+  const { index = 0, usedLinks = new Set() } = opts;
   const data = await fetchJson(
-    `${PEXELS_PHOTO_SEARCH}?query=${encodeURIComponent(query)}&orientation=portrait&per_page=3`,
+    `${PEXELS_PHOTO_SEARCH}?query=${encodeURIComponent(query)}&orientation=portrait&per_page=8`,
     { Authorization: PEXELS_API_KEY }
   );
-  const photo = (data && data.photos && data.photos[0]) || null;
+  const photos = (data && data.photos) || [];
+  const fresh = photos.filter((p) => !usedLinks.has(p.id));
+  const photo =
+    (fresh.length ? fresh : photos)[index % Math.max(fresh.length || photos.length, 1)] || null;
   if (!photo) {
     const e = new Error('Pexels returned no photos for the query');
     e.code = 'pexels_error';
     throw e;
   }
+  usedLinks.add(photo.id);
   const url = photo.src && (photo.src.large2x || photo.src.original);
   if (!url) {
     const e = new Error('Pexels photo has no downloadable source');
     e.code = 'pexels_error';
     throw e;
   }
-  const dest = path.join(workDir, 'bg.jpg');
+  const dest = path.join(workDir, `bg_${index}.jpg`);
   await downloadFile(url, dest);
   return { file: dest, type: BG_TYPES.image, source: 'pexels-image', url };
 }
@@ -394,6 +519,8 @@ async function pexelsPickPhoto(query, workDir) {
 const ICON_KEYWORDS = {
   cook: 'mdi:chef-hat', food: 'mdi:chef-hat', recipe: 'mdi:chef-hat', bake: 'mdi:chef-hat',
   coffee: 'mdi:coffee', drink: 'mdi:cup-water', fruit: 'mdi:fruit-watermelon',
+  pasta: 'mdi:pasta', garlic: 'mdi:chili-mild', tomato: 'mdi:food-apple', basil: 'mdi:leaf',
+  breakfast: 'mdi:egg-easter', bread: 'mdi:bread-slice', cake: 'mdi:cake-variant',
   tech: 'mdi:robot', ai: 'mdi:robot', code: 'mdi:code-tags', program: 'mdi:code-tags',
   computer: 'mdi:laptop', phone: 'mdi:cellphone', internet: 'mdi:wifi',
   fitness: 'mdi:weight-lifter', workout: 'mdi:weight-lifter', gym: 'mdi:weight-lifter',
@@ -402,18 +529,66 @@ const ICON_KEYWORDS = {
   invest: 'mdi:chart-line', crypto: 'mdi:bitcoin',
   travel: 'mdi:airplane', trip: 'mdi:airplane', vacation: 'mdi:beach',
   nature: 'mdi:tree', plant: 'mdi:flower', animal: 'mdi:paw', cat: 'mdi:cat', dog: 'mdi:dog',
+  ocean: 'mdi:waves', sea: 'mdi:waves', sun: 'mdi:weather-sunny',
   music: 'mdi:music-note', movie: 'mdi:movie', film: 'mdi:clapperboard',
   book: 'mdi:book-open', learn: 'mdi:school', study: 'mdi:school',
   car: 'mdi:car', drive: 'mdi:car', engine: 'mdi:engine',
   star: 'mdi:star', heart: 'mdi:heart', idea: 'mdi:lightbulb-on',
+  sleep: 'mdi:bed', health: 'mdi:medical-bag', success: 'mdi:trophy', time: 'mdi:clock-outline',
+  // Arabic keywords map to the same icons
+  'طبخ': 'mdi:chef-hat', 'أكل': 'mdi:chef-hat', 'طعام': 'mdi:chef-hat', 'بيض': 'mdi:egg-easter',
+  'قهوة': 'mdi:coffee', 'شاي': 'mdi:coffee',   'طماطم': 'mdi:food-apple', 'ثوم': 'mdi:chili-mild',
+  'باستا': 'mdi:pasta', 'معكرونة': 'mdi:pasta', 'خبز': 'mdi:bread-slice', 'حلوى': 'mdi:cake-variant',
+  'نكهة': 'mdi:silverware-fork-knife', 'ساخنة': 'mdi:pot-steam', 'ريحان': 'mdi:leaf', 'فاكهة': 'mdi:fruit-watermelon',
+  'برمجة': 'mdi:code-tags', 'كود': 'mdi:code-tags', 'تقنية': 'mdi:robot', 'ذكاء': 'mdi:robot',
+  'حاسوب': 'mdi:laptop', 'هاتف': 'mdi:cellphone', 'انترنت': 'mdi:wifi', 'موقع': 'mdi:web',
+  'رياضة': 'mdi:weight-lifter', 'لياقة': 'mdi:weight-lifter', 'جري': 'mdi:run', 'تمرين': 'mdi:dumbbell',
+  'سفر': 'mdi:airplane', 'رحلة': 'mdi:airplane', 'طبيعة': 'mdi:tree', 'شجرة': 'mdi:tree',
+  'نبات': 'mdi:flower', 'حيوان': 'mdi:paw', 'قط': 'mdi:cat', 'كلب': 'mdi:dog',
+  'موسيقى': 'mdi:music-note', 'فيلم': 'mdi:clapperboard', 'سينما': 'mdi:movie',
+  'كتاب': 'mdi:book-open', 'قراءة': 'mdi:book-open', 'تعلم': 'mdi:school', 'دراسة': 'mdi:school',
+  'سيارة': 'mdi:car', 'قيادة': 'mdi:car',
+  'مال': 'mdi:currency-usd', 'أموال': 'mdi:currency-usd', 'استثمار': 'mdi:chart-line',
+  'قلب': 'mdi:heart', 'حب': 'mdi:heart', 'نجمة': 'mdi:star', 'فكرة': 'mdi:lightbulb-on',
+  'بحر': 'mdi:waves', 'شمس': 'mdi:weather-sunny', 'مطر': 'mdi:weather-rainy', 'جبل': 'mdi:image-filter-hdr',
+  'نوم': 'mdi:bed', 'صحة': 'mdi:medical-bag', 'عمل': 'mdi:briefcase', 'نجاح': 'mdi:trophy', 'وقت': 'mdi:clock-outline',
 };
 
-function pickIcon(query) {
-  const q = (query || '').toLowerCase();
-  for (const [key, icon] of Object.entries(ICON_KEYWORDS)) {
-    if (q.includes(key)) return icon;
+const DEFAULT_ICONS = [
+  'mdi:clapperboard', 'mdi:lightbulb-on', 'mdi:rocket-launch', 'mdi:fire',
+  'mdi:star-four-points', 'mdi:earth',
+];
+
+async function pickSceneIcon(sceneText, query, index, usedIcons = new Set()) {
+  const candidates = [];
+  const scan = (text) => {
+    const q = (text || '').toLowerCase();
+    for (const [key, icon] of Object.entries(ICON_KEYWORDS)) {
+      if (q.includes(key.toLowerCase())) candidates.push(icon);
+    }
+  };
+  scan(sceneText);
+  scan(query);
+  if (!candidates.length && query && /[a-zA-Z]/.test(query)) {
+    const words = (query.match(/[a-zA-Z][a-zA-Z-]{2,}/g) || [])
+      .filter((w) => !STOP_WORDS.has(w.toLowerCase()));
+    try {
+      for (const word of words.slice(0, 4)) {
+        const data = await fetchJson(
+          `${ICONIFY_API}/search?query=${encodeURIComponent(word)}&limit=8`
+        );
+        if (data && Array.isArray(data.icons) && data.icons.length) {
+          candidates.push(...data.icons);
+          break;
+        }
+      }
+    } catch (_) { /* fall back to defaults */ }
   }
-  return 'mdi:clapperboard';
+  const fresh = candidates.filter((c) => !usedIcons.has(c));
+  const pool = fresh.length ? fresh : candidates.length ? candidates : DEFAULT_ICONS;
+  const icon = pool[index % pool.length] || DEFAULT_ICONS[0];
+  usedIcons.add(icon);
+  return icon;
 }
 
 function gradientSvg(w, h, top = '#141b36', bottom = '#222b52') {
@@ -428,9 +603,8 @@ function gradientSvg(w, h, top = '#141b36', bottom = '#222b52') {
   ].join('\n');
 }
 
-async function createIconBackground(query, workDir) {
-  const icon = pickIcon(query);
-  const bgPath = path.join(workDir, 'bg.png');
+async function createIconBackground(icon, workDir, index = 0) {
+  const bgPath = path.join(workDir, `bg_${index}.png`);
   const svgUrl = `${ICONIFY_API}/${icon}.svg?color=%23ffffff&width=720&height=720`;
   const svg = await fetchText(svgUrl);
   const fadedSvg = svg.replace('<svg', '<svg style="opacity:0.20"', 1);
@@ -449,21 +623,122 @@ async function createIconBackground(query, workDir) {
   return { file: bgPath, type: BG_TYPES.image, source: 'iconify', icon };
 }
 
-async function fetchBackground({ backgroundType, query, workDir }) {
-  const q = (query || '').trim();
-  if (backgroundType === BG_TYPES.video || backgroundType === BG_TYPES.image) {
-    if (!PEXELS_API_KEY) {
-      const e = new Error(
-        'Footage backgrounds (video/image) require PEXELS_API_KEY'
-      );
-      e.code = 'pexels_not_configured';
-      throw e;
-    }
-    return backgroundType === BG_TYPES.video
-      ? pexelsPickVideo(q, workDir)
-      : pexelsPickPhoto(q, workDir);
+function pexelsError(message, code = 'pexels_error') {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+
+function deriveSceneQuery(text) {
+  return deriveQuery(null, text || '');
+}
+
+function splitSentences(text) {
+  const out = [];
+  const re = /[^.!?؟…]*[.!?؟…]+/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    out.push(text.slice(last, re.lastIndex).trim());
+    last = re.lastIndex;
   }
-  return createIconBackground(q, workDir);
+  if (last < text.length) {
+    const rest = text.slice(last).trim();
+    if (rest) out.push(rest);
+  }
+  return out.filter(Boolean);
+}
+
+/**
+ * Split the TTS text into scenes aligned with the voice-over: one scene per
+ * spoken sentence. Short sentences are merged into the previous scene and the
+ * result is capped at `maxScenes`. Each scene carries its time range.
+ */
+function splitIntoScenes(text, timings, maxScenes = MAX_SCENES) {
+  const n = timings.length;
+  if (!n) return [];
+
+  const wordRe = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
+  const sentences = splitSentences(text);
+  let start = 0;
+  const scenes = [];
+  for (const sent of sentences) {
+    const wc = (sent.match(wordRe) || []).length;
+    const end = Math.min(start + wc, n);
+    if (end <= start) continue;
+    scenes.push({ text: sent, start, end });
+    start = end;
+  }
+  if (!scenes.length) scenes.push({ text, start: 0, end: n });
+
+  const merged = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const s = scenes[i];
+    const t0 = timings[s.start];
+    const t1 = timings[s.end - 1];
+    const dur = t1.end - t0.start;
+    if (
+      merged.length &&
+      (dur < SCENE_MIN_SECONDS || merged.length + (scenes.length - i) > maxScenes)
+    ) {
+      const prev = merged[merged.length - 1];
+      prev.end = s.end;
+      prev.text = `${prev.text} ${s.text}`.trim();
+    } else {
+      merged.push({ text: s.text, start: s.start, end: s.end });
+    }
+  }
+
+  return merged.map((s) => ({
+    text: s.text,
+    start: Math.max(0, timings[s.start].start),
+    end: timings[s.end - 1].end,
+  }));
+}
+
+async function fetchBackgrounds({
+  backgroundType,
+  queryOverride,
+  idea,
+  script,
+  scenes,
+  workDir,
+}) {
+  const usedLinks = new Set();
+  const usedIcons = new Set();
+  const fallbackQuery = deriveQuery(idea, script);
+
+  const perScene = scenes.map(async (scene, index) => {
+    const query =
+      (queryOverride && queryOverride.trim()) ||
+      deriveSceneQuery(scene.text) ||
+      fallbackQuery;
+    if (backgroundType === BG_TYPES.video) {
+      if (!PEXELS_API_KEY) {
+        throw pexelsError(
+          'Footage backgrounds (video/image) require PEXELS_API_KEY',
+          'pexels_not_configured'
+        );
+      }
+      const bg = await pexelsPickVideo(query, workDir, { index, usedLinks });
+      return { ...bg, scene: { ...scene, query } };
+    }
+    if (backgroundType === BG_TYPES.image) {
+      if (!PEXELS_API_KEY) {
+        throw pexelsError(
+          'Footage backgrounds (video/image) require PEXELS_API_KEY',
+          'pexels_not_configured'
+        );
+      }
+      const bg = await pexelsPickPhoto(query, workDir, { index, usedLinks });
+      return { ...bg, scene: { ...scene, query } };
+    }
+    const icon = await pickSceneIcon(scene.text, query, index, usedIcons);
+    const bg = await createIconBackground(icon, workDir, index);
+    return { ...bg, scene: { ...scene, query } };
+  });
+
+  return Promise.all(perScene);
 }
 
 /* ------------------------------------------------------------------ */
@@ -481,7 +756,7 @@ const SYSTEM_PROMPT = (language, withEmojis = false) => {
     `If the idea is in ${langName === 'Arabic' ? 'Arabic' : 'English'} keep the script in that language. ` +
     `Return only the script text.`;
   if (withEmojis) {
-    prompt += ` Sprinkle 3-5 relevant emojis directly into the script text to make it playful and engaging.`;
+    prompt += ` You MUST include 3-5 relevant emojis, sprinkled directly into the script text at natural points to make it playful and engaging.`;
   }
   return prompt;
 };
@@ -700,39 +975,83 @@ async function renderVideo({
   assPath,
   outputPath,
   duration,
-  background,
+  backgrounds,
+  scenes,
   emojiOverlays = [],
 }) {
   const totalDuration = duration + TRAIL_PADDING;
   const total = totalDuration.toFixed(3);
+  const single = scenes.length <= 1;
 
   const inputs = ['-y'];
-  let bgChain;
-
-  if (background.type === BG_TYPES.video) {
-    inputs.push('-stream_loop', '-1', '-i', background.file);
-    bgChain = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,'
-      + 'crop=1080:1920,fps=30,ass=' + assPath;
-  } else {
-    inputs.push('-loop', '1', '-framerate', '30', '-i', background.file);
-    bgChain = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,'
-      + 'crop=1080:1920,fps=30,'
-      + "zoompan=z='min(zoom+0.0015,1.15)':d=1:s=1080x1920:fps=30,"
-      + 'ass=' + assPath;
+  for (const bg of backgrounds) {
+    if (bg.type === BG_TYPES.video) {
+      inputs.push('-stream_loop', '-1', '-i', bg.file);
+    } else {
+      inputs.push('-loop', '1', '-framerate', '30', '-i', bg.file);
+    }
   }
+  const bgCount = backgrounds.length;
   inputs.push('-i', audioPath);
   for (const em of emojiOverlays) {
     inputs.push('-loop', '1', '-framerate', '30', '-i', em.file);
   }
 
+  // Per-scene trim durations. Extend the last scene so the crossfaded
+  // background exactly covers audio + trailing padding.
+  const T = SCENE_TRANSITION;
+  const durations = scenes.map((s, i) => {
+    const raw = s.end - s.start;
+    return i === scenes.length - 1 ? raw : Math.max(SCENE_MIN_SECONDS, raw + T);
+  });
+  if (!single) {
+    const sumPrev = durations.slice(0, -1).reduce((a, b) => a + b, 0);
+    const overlapTotal = (durations.length - 1) * T;
+    let lastNeeded = totalDuration - (sumPrev - overlapTotal);
+    lastNeeded = Math.max(lastNeeded + 0.3, T + 0.4);
+    durations[durations.length - 1] = lastNeeded;
+  }
+
   const parts = [];
-  parts.push(bgChain + '[base]');
+  if (single) {
+    const bg = backgrounds[0];
+    let chain = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,'
+      + 'crop=1080:1920,fps=30';
+    if (bg.type !== BG_TYPES.video) {
+      chain += ",zoompan=z='min(zoom+0.0015,1.15)':d=1:s=1080x1920:fps=30,fps=30";
+    }
+    parts.push(`${chain},ass=${assPath}[base]`);
+  } else {
+    for (let k = 0; k < scenes.length; k++) {
+      const bg = backgrounds[k];
+      let chain = `[${k}:v]scale=1080:1920:force_original_aspect_ratio=increase,`
+        + 'crop=1080:1920,fps=30';
+      if (bg.type !== BG_TYPES.video) {
+        chain += ",zoompan=z='min(zoom+0.0015,1.15)':d=1:s=1080x1920:fps=30,fps=30";
+      }
+      chain += `,trim=duration=${durations[k].toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p`;
+      parts.push(`${chain}[v${k}]`);
+    }
+    let prev = '[v0]';
+    let acc = durations[0];
+    for (let k = 1; k < scenes.length; k++) {
+      const offset = acc - T;
+      acc = acc + durations[k] - T;
+      parts.push(
+        `${prev}[v${k}]xfade=transition=fade:duration=${T}:offset=${offset.toFixed(3)}[xf${k}]`
+      );
+      prev = `[xf${k}]`;
+    }
+    parts.push(`${prev}ass=${assPath}[base]`);
+  }
+
   let cur = '[base]';
   for (let k = 0; k < emojiOverlays.length; k++) {
     const em = emojiOverlays[k];
-    const outLabel = `[v${k}]`;
+    const outLabel = `[ov${k}]`;
+    const inIdx = bgCount + 1 + k;
     parts.push(
-      `${cur}[${2 + k}:v]overlay=x=${em.x}:y=${em.y}:` +
+      `${cur}[${inIdx}:v]overlay=x=${em.x}:y=${em.y}:` +
       `enable='between(t,${em.start.toFixed(3)},${em.end.toFixed(3)})'${outLabel}`
     );
     cur = outLabel;
@@ -742,7 +1061,99 @@ async function renderVideo({
     ...inputs,
     '-filter_complex', parts.join(';'),
     '-map', cur,
-    '-map', '1:a',
+    '-map', `${bgCount}:a`,
+    '-t', total,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-movflags', '+faststart',
+    outputPath,
+  ];
+
+  try {
+    console.log(`[render] scenes=${scenes.length} durations=${durations.map(d=>d.toFixed(2)).join(',')} total=${total} bgTypes=${backgrounds.map(b=>b.type).join(',')}`);
+    await runProcess(FFMPEG_BIN, args, { timeout: 300000 });
+  } catch (err) {
+    console.log(`[render] xfade failed: ${err.message}; falling back to hard cuts`);
+    if (single) throw err;
+    // Fallback: same scenes as hard cuts via overlay enable windows, so a
+    // render can never die because of an xfade edge case.
+    await renderVideoHardCut({
+      audioPath, assPath, outputPath, duration, backgrounds, scenes, emojiOverlays,
+    });
+  }
+  return outputPath;
+}
+
+async function renderVideoHardCut({
+  audioPath,
+  assPath,
+  outputPath,
+  duration,
+  backgrounds,
+  scenes,
+  emojiOverlays = [],
+}) {
+  const totalDuration = duration + TRAIL_PADDING;
+  const total = totalDuration.toFixed(3);
+
+  const inputs = ['-y'];
+  for (const bg of backgrounds) {
+    if (bg.type === BG_TYPES.video) {
+      inputs.push('-stream_loop', '-1', '-i', bg.file);
+    } else {
+      inputs.push('-loop', '1', '-framerate', '30', '-i', bg.file);
+    }
+  }
+  const bgCount = backgrounds.length;
+  inputs.push('-i', audioPath);
+  for (const em of emojiOverlays) {
+    inputs.push('-loop', '1', '-framerate', '30', '-i', em.file);
+  }
+
+  const parts = [];
+  const bg0 = backgrounds[0];
+  let base = '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,'
+    + 'crop=1080:1920,fps=30';
+  if (bg0.type !== BG_TYPES.video) {
+    base += ",zoompan=z='min(zoom+0.0015,1.15)':d=1:s=1080x1920:fps=30,fps=30";
+  }
+  parts.push(`${base},ass=${assPath}[base]`);
+  let cur = '[base]';
+  for (let k = 1; k < scenes.length; k++) {
+    const bg = backgrounds[k];
+    let chain = `[${k}:v]scale=1080:1920:force_original_aspect_ratio=increase,`
+      + 'crop=1080:1920,fps=30';
+    if (bg.type !== BG_TYPES.video) {
+      chain += ",zoompan=z='min(zoom+0.0015,1.15)':d=1:s=1080x1920:fps=30,fps=30";
+    }
+    chain += ',format=yuv420p';
+    parts.push(`${chain}[s${k}]`);
+    const outLabel = `[b${k}]`;
+    parts.push(
+      `${cur}[s${k}]overlay=enable='between(t,${scenes[k].start.toFixed(3)},${scenes[k].end.toFixed(3)})'${outLabel}`
+    );
+    cur = outLabel;
+  }
+  for (let k = 0; k < emojiOverlays.length; k++) {
+    const em = emojiOverlays[k];
+    const outLabel = `[ov${k}]`;
+    const inIdx = bgCount + 1 + k;
+    parts.push(
+      `${cur}[${inIdx}:v]overlay=x=${em.x}:y=${em.y}:` +
+      `enable='between(t,${em.start.toFixed(3)},${em.end.toFixed(3)})'${outLabel}`
+    );
+    cur = outLabel;
+  }
+
+  const args = [
+    ...inputs,
+    '-filter_complex', parts.join(';'),
+    '-map', cur,
+    '-map', `${bgCount}:a`,
     '-t', total,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
@@ -765,6 +1176,7 @@ async function processJob(job) {
   updateJob(job.id, { status: 'processing' });
   const workDir = path.join(WORK_DIR, job.id);
   await fsp.mkdir(workDir, { recursive: true });
+  console.log(`[job ${job.id}] start style=${job.style} bg=${job.backgroundType || 'auto'}`);
 
   try {
     let script = job.script;
@@ -785,6 +1197,15 @@ async function processJob(job) {
     }
 
     const style = job.style === STYLE_EMOJI ? STYLE_EMOJI : STYLE_FOOTAGE;
+
+    if (style === STYLE_EMOJI) {
+      // Guarantee emojis are present even for user-typed scripts.
+      const withEmojis = await ensureEmojis(script, job.language);
+      if (withEmojis !== script) {
+        script = withEmojis;
+        updateJob(job.id, { script });
+      }
+    }
 
     // TTS always runs on the emoji-free text so word timings stay clean.
     const cleanScript = stripEmojis(script).replace(/\s+/g, ' ').trim();
@@ -821,15 +1242,19 @@ async function processJob(job) {
     const emojiGroups =
       style === STYLE_EMOJI ? associateEmojis(script, timings) : [];
 
-    let background;
+    let backgrounds = [];
+    let scenes = [];
     if (style === STYLE_FOOTAGE) {
-      const query =
-        (job.query && job.query.trim()) ||
-        deriveQuery(job.idea, cleanScript);
-      const bgType = job.backgroundType || BG_TYPES.video;
-      background = await fetchBackground({
-        backgroundType: bgType,
-        query,
+      scenes = splitIntoScenes(cleanScript, timings);
+      if (!scenes.length) {
+        scenes = [{ text: cleanScript, start: 0, end: duration }];
+      }
+      backgrounds = await fetchBackgrounds({
+        backgroundType: job.backgroundType || BG_TYPES.video,
+        queryOverride: job.query,
+        idea: job.idea,
+        script: cleanScript,
+        scenes,
         workDir,
       });
     } else {
@@ -838,7 +1263,8 @@ async function processJob(job) {
         bgPath,
         await sharp(Buffer.from(gradientSvg(1080, 1920))).png().toBuffer()
       );
-      background = { file: bgPath, type: 'solid', source: 'gradient' };
+      backgrounds = [{ file: bgPath, type: 'solid', source: 'gradient' }];
+      scenes = [{ text: cleanScript, start: 0, end: duration }];
     }
 
     const assContent =
@@ -870,7 +1296,7 @@ async function processJob(job) {
             x,
             y,
             start: Math.max(0, timings[i].start - 0.08),
-            end: wordEnd + 0.15,
+            end: wordEnd + 0.6,
           });
         }
       }
@@ -883,7 +1309,8 @@ async function processJob(job) {
       assPath,
       outputPath,
       duration,
-      background,
+      backgrounds,
+      scenes,
       emojiOverlays,
     });
 
@@ -893,10 +1320,16 @@ async function processJob(job) {
       outputUrl: `/api/outputs/${outputFile}`,
       meta: {
         style,
-        backgroundType: background.type,
-        footageSource: background.source || null,
-        footageUrl: background.url || null,
-        icon: background.icon || null,
+        backgroundType:
+          style === STYLE_EMOJI ? 'solid' : job.backgroundType || BG_TYPES.video,
+        sceneCount: scenes.length,
+        scenes: scenes.map((s, i) => ({
+          text: s.text,
+          query: backgrounds[i] && backgrounds[i].scene ? backgrounds[i].scene.query : null,
+          source: backgrounds[i] ? backgrounds[i].source : null,
+          icon: backgrounds[i] ? backgrounds[i].icon || null : null,
+          url: backgrounds[i] ? backgrounds[i].url || null : null,
+        })),
         emojiCount: emojiOverlays.length,
         ttsSource: source,
         wordCount: timings.length,
@@ -905,6 +1338,7 @@ async function processJob(job) {
     });
   } catch (err) {
     const code = err.code || 'render_failed';
+    console.error(`[job ${job.id}] failed (${code}): ${err.message}`);
     updateJob(job.id, {
       status: 'failed',
       error: err.message,
