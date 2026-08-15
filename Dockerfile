@@ -16,7 +16,9 @@ RUN pip3 install --break-system-packages edge-tts
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --omit=dev
+# --ignore-scripts skips the ffmpeg-static download (~70MB); the apt ffmpeg
+# above already ships libass for the ASS subtitle filter.
+RUN npm install --omit=dev --ignore-scripts
 
 COPY app ./app
 COPY public ./public

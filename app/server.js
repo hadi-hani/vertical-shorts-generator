@@ -32,7 +32,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 let FFMPEG_BIN = 'ffmpeg';
 try {
   const staticFfmpeg = require('ffmpeg-static');
-  if (staticFfmpeg) FFMPEG_BIN = staticFfmpeg;
+  if (staticFfmpeg && fs.existsSync(staticFfmpeg)) FFMPEG_BIN = staticFfmpeg;
 } catch (_) { /* ffmpeg-static not installed */ }
 
 const MAX_SCRIPT_SECONDS = 60;
