@@ -174,7 +174,7 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 | `/api/auth/login`     | POST   | Log in — sets a session cookie.              |
 | `/api/auth/logout`    | POST   | End the session.                             |
 | `/api/auth/me`        | GET    | Current user (401 when logged out).          |
-| `/api/jobs`           | GET    | List all jobs (auth required).               |
+| `/api/jobs`           | GET    | List the current user's projects (auth required). |
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
 
 ## Project structure

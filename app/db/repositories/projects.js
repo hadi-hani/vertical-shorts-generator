@@ -1,0 +1,101 @@
+'use strict';
+
+const { getDb } = require('../index');
+
+const UPDATABLE = new Set([
+  'status',
+  'error',
+  'error_code',
+  'output_url',
+  'subtitle_srt_url',
+  'subtitle_ass_url',
+  'estimated_duration',
+  'completed_at',
+  'meta',
+  'script',
+]);
+
+function create({ id, userId, idea, script, language, captionStyle, timingMode, wordsPerSegment }) {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      'INSERT INTO projects (id, user_id, idea, script, language, caption_style, timing_mode, words_per_segment, status, meta, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(
+      id,
+      userId,
+      idea || null,
+      script || null,
+      language,
+      captionStyle,
+      timingMode,
+      wordsPerSegment,
+      'queued',
+      '{}',
+      now,
+      now
+    );
+  return findById(id);
+}
+
+function findById(id) {
+  return getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) || null;
+}
+
+function listByUser(userId) {
+  return getDb()
+    .prepare('SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC')
+    .all(userId);
+}
+
+function update(id, patch) {
+  const keys = Object.keys(patch).filter((k) => UPDATABLE.has(k));
+  if (keys.length) {
+    const values = keys.map((k) => {
+      if (k === 'meta' && patch[k] && typeof patch[k] === 'object') {
+        return JSON.stringify(patch[k]);
+      }
+      return patch[k] === undefined ? null : patch[k];
+    });
+    keys.push('updated_at');
+    values.push(new Date().toISOString());
+    getDb()
+      .prepare(`UPDATE projects SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+      .run(...values, id);
+  }
+  return findById(id);
+}
+
+function parseMeta(raw) {
+  try {
+    return JSON.parse(raw || '{}');
+  } catch (_) {
+    return {};
+  }
+}
+
+function toPublicProject(row) {
+  return {
+    id: row.id,
+    status: row.status,
+    idea: row.idea,
+    script: row.script,
+    language: row.language,
+    captionStyle: row.caption_style,
+    timingMode: row.timing_mode,
+    wordsPerSegment: row.words_per_segment,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+    outputUrl: row.output_url,
+    subtitleSrtUrl: row.subtitle_srt_url,
+    subtitleAssUrl: row.subtitle_ass_url,
+    error: row.error,
+    errorCode: row.error_code,
+    estimatedDuration: row.estimated_duration,
+    meta: parseMeta(row.meta),
+  };
+}
+
+module.exports = { create, findById, listByUser, update, toPublicProject };

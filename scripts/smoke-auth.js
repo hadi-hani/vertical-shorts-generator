@@ -141,6 +141,7 @@ async function main() {
     const SCRIPT =
       'مرحبا بك في تطبيق الكابشن العربي. هذا اختبار قصير للتأكد أن الميزة الجديدة لم تكسر شيئا.';
 
+    let firstJobId = '';
     for (const style of ['word', 'progressive']) {
       const job = await request('POST', '/api/generate/subtitles', {
         cookie: authedJar,
@@ -148,6 +149,7 @@ async function main() {
       });
       const jobId = job.data && job.data.job && job.data.job.id;
       check(`submit ${style} job (202)`, job.status === 202 && Boolean(jobId));
+      if (!firstJobId) firstJobId = jobId;
 
       const final = await pollJob(jobId, authedJar, 180000);
       check(`${style} job completed`, final === 'completed');
@@ -159,6 +161,21 @@ async function main() {
       const anon = await request('GET', `/api/outputs/${jobId}.mp4`);
       check(`${style} mp4 blocked without auth`, anon.status === 401);
     }
+
+    const aList = await request('GET', '/api/jobs', { cookie: authedJar });
+    check('user A sees all their projects', aList.data && aList.data.jobs.length === 2);
+
+    const regB = await request('POST', '/api/auth/register', {
+      body: { email: 'other@example.com', password: 'password456' },
+    });
+    const jarB = cookieOf(regB);
+    check('second user registers', regB.status === 201 && Boolean(jarB));
+
+    const bJobs = await request('GET', '/api/jobs', { cookie: jarB });
+    check('user B sees no projects', bJobs.data && bJobs.data.jobs.length === 0);
+    check("user B cannot read A's job (404)", (await request('GET', `/api/jobs/${firstJobId}`, { cookie: jarB })).status === 404);
+    check("user B cannot download A's file (404)", (await request('GET', `/api/outputs/${firstJobId}.mp4`, { cookie: jarB })).status === 404);
+    check('A can still read own job', (await request('GET', `/api/jobs/${firstJobId}`, { cookie: authedJar })).status === 200);
 
     console.log('----------------------------------------');
     console.log(`${checks - failures}/${checks} checks passed`);
