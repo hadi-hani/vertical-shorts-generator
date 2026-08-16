@@ -41,6 +41,10 @@ class SqliteSessionStore extends session.Store {
       cb(err);
     }
   }
+
+  cleanupExpired() {
+    return getDb().prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now()).changes;
+  }
 }
 
 module.exports = SqliteSessionStore;

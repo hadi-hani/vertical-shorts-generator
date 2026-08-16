@@ -103,9 +103,10 @@ root, which is loaded automatically and git-ignored).
 | `GEMINI_MODEL`   | `gemini-2.5-flash`      | Gemini model for script writing.                       |
 | `PORT`           | `8283`                  | HTTP port.                                              |
 | `HOST`           | `0.0.0.0`               | Bind address.                                           |
-| `SESSIONS_SECRET`| *(random per boot)*     | Session cookie signing secret — set a fixed value in production. |
+| `SESSIONS_SECRET`| *(random per boot)*     | Session cookie signing secret — the app refuses to start in production (`NODE_ENV=production`) without it. |
 | `DB_PATH`        | `./data/app.db`         | SQLite database file.                                   |
 | `COOKIE_SECURE`  | `0`                     | Set to `1` when serving over HTTPS.                     |
+| `TRUST_PROXY`    | `0`                     | Set to the number of reverse-proxy hops (e.g. `1`) behind Nginx/Cloudflare. |
 
 The Arabic voice and font are defined in `app/server.js`:
 

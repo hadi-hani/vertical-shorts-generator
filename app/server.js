@@ -50,6 +50,7 @@ const FONTS = { ar: 'Noto Naskh Arabic' };
 const LANGUAGES = Object.keys(VOICES);
 
 const app = express();
+app.set('trust proxy', config.TRUST_PROXY);
 app.use(express.json({ limit: '1mb' }));
 
 app.use(
@@ -640,6 +641,12 @@ async function boot() {
       '[boot] WARNING: SESSIONS_SECRET not set in .env — using a random secret; sessions reset on restart'
     );
   }
+
+  const sessionStore = new SqliteSessionStore();
+  setInterval(() => {
+    const removed = sessionStore.cleanupExpired();
+    if (removed > 0) console.log(`[sessions] cleaned ${removed} expired session(s)`);
+  }, 60 * 60 * 1000).unref();
 
   app.listen(PORT, HOST, () => {
     console.log(`[boot] shorts-video-mvp listening on http://${HOST}:${PORT}`);
