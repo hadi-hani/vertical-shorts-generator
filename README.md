@@ -33,6 +33,9 @@ sync with the speech. The web UI is a single tool:
 - **Smart word timing** — precise timestamps from the TTS engine; falls back to
   whisper-based alignment if edge-tts is unavailable.
 - **Runs anywhere** — plain Node.js or a single-command Docker container.
+- **User accounts** — register/login with session cookies (SQLite-backed) and a
+  simple Arabic RTL auth page. Generation, job listing and file downloads
+  require an authenticated session.
 
 ## How it works
 
@@ -100,6 +103,9 @@ root, which is loaded automatically and git-ignored).
 | `GEMINI_MODEL`   | `gemini-2.5-flash`      | Gemini model for script writing.                       |
 | `PORT`           | `8283`                  | HTTP port.                                              |
 | `HOST`           | `0.0.0.0`               | Bind address.                                           |
+| `SESSIONS_SECRET`| *(random per boot)*     | Session cookie signing secret — set a fixed value in production. |
+| `DB_PATH`        | `./data/app.db`         | SQLite database file.                                   |
+| `COOKIE_SECURE`  | `0`                     | Set to `1` when serving over HTTPS.                     |
 
 The Arabic voice and font are defined in `app/server.js`:
 
@@ -113,6 +119,10 @@ The Arabic voice and font are defined in `app/server.js`:
 Create a **Subtitles & Captions** job: captions centered on a dark gradient,
 with your choice of caption style and timing. Provide **either** an `idea`
 (Gemini writes the script) **or** a `script`. Language is Arabic only.
+
+> **Auth:** this endpoint (and job listing, output downloads, and script
+> generation) requires an authenticated session. Register first via
+> `POST /api/auth/register`, or use the auth page at `/auth.html`.
 
 Body:
 
@@ -159,7 +169,11 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 | Endpoint              | Method | Description                                  |
 |-----------------------|--------|----------------------------------------------|
 | `/api/health`         | GET    | Health + feature flags (gemini/ffmpeg).      |
-| `/api/jobs`           | GET    | List all jobs.                               |
+| `/api/auth/register`  | POST   | Create an account (`{"email","password"}`).  |
+| `/api/auth/login`     | POST   | Log in — sets a session cookie.              |
+| `/api/auth/logout`    | POST   | End the session.                             |
+| `/api/auth/me`        | GET    | Current user (401 when logged out).          |
+| `/api/jobs`           | GET    | List all jobs (auth required).               |
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
 
 ## Project structure
@@ -168,15 +182,23 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 .
 ├── app/
 │   ├── server.js            # Express API + pipeline orchestration
+│   ├── config.js            # Env/config loading (.env)
 │   ├── captions.js          # Caption engine: segmentation, 2 ASS styles, .srt
 │   ├── tts_word_timings.py  # edge-tts audio + word-boundary timing extraction
-│   └── align_words.py       # whisper-based alignment fallback
+│   ├── align_words.py       # whisper-based alignment fallback
+│   ├── db/                  # SQLite connection, migrations, repositories
+│   ├── routes/              # auth.js + API routes
+│   ├── services/            # auth.js (scrypt hashing)
+│   └── middleware/          # auth.js (requireAuth)
 ├── public/                  # Web UI
-│   ├── index.html           # Single-page Arabic captions UI
+│   ├── index.html           # Single-page Arabic captions UI (tool)
+│   ├── auth.html            # Arabic RTL login/register page
 │   └── js/
-│       ├── app.js           # Shared helpers: fetch, job polling
+│       ├── app.js           # Shared helpers: fetch, auth bar, job polling
+│       ├── auth.js          # Auth page logic
 │       └── tools/subtitles.js  # Captions tool
 ├── data/
+│   ├── app.db               # SQLite (users/sessions) — git-ignored
 │   ├── output/              # Rendered MP4s + .srt/.ass (git-ignored)
 │   └── work/                # Per-job scratch space (git-ignored)
 ├── Dockerfile

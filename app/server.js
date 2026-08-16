@@ -11,26 +11,22 @@ const sharp = require('sharp');
 const captions = require('./captions');
 const { segmentCaptions, buildAss, buildSrt } = captions;
 
-const ENV_FILE = path.join(__dirname, '..', '.env');
-if (fs.existsSync(ENV_FILE)) {
-  for (const line of fs.readFileSync(ENV_FILE, 'utf8').split('\n')) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (m && process.env[m[1]] === undefined) {
-      process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-    }
-  }
-}
+const config = require('./config');
+const session = require('express-session');
+const SqliteSessionStore = require('./db/session-store');
+const authRoutes = require('./routes/auth');
+const { requireAuth } = require('./middleware/auth');
+const { initDb } = require('./db');
 
-const ROOT_DIR = path.join(__dirname, '..');
-const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
-const DATA_DIR = path.join(ROOT_DIR, 'data');
-const OUTPUT_DIR = path.join(DATA_DIR, 'output');
-const WORK_DIR = path.join(DATA_DIR, 'work');
-
-const PORT = parseInt(process.env.PORT || '8283', 10);
-const HOST = process.env.HOST || '0.0.0.0';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const {
+  PUBLIC_DIR,
+  OUTPUT_DIR,
+  WORK_DIR,
+  PORT,
+  HOST,
+  GEMINI_API_KEY,
+  GEMINI_MODEL,
+} = config;
 
 let FFMPEG_BIN = 'ffmpeg';
 try {
@@ -55,6 +51,24 @@ const LANGUAGES = Object.keys(VOICES);
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+
+app.use(
+  session({
+    name: 'sid',
+    secret: config.SESSIONS_SECRET,
+    store: new SqliteSessionStore(),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: config.COOKIE_SECURE,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  })
+);
+
+app.use('/api/auth', authRoutes);
 
 /* ------------------------------------------------------------------ */
 /* Job store + tiny sequential queue                                    */
@@ -509,11 +523,11 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.get('/api/jobs', (req, res) => {
+app.get('/api/jobs', requireAuth, (req, res) => {
   res.json({ jobs: listJobs().map(publicJob) });
 });
 
-app.get('/api/jobs/:id', (req, res) => {
+app.get('/api/jobs/:id', requireAuth, (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'job_not_found' });
   res.json({ job: publicJob(job) });
@@ -544,7 +558,7 @@ function validateGenerateBody(req, res) {
   return { idea, script, language: lang };
 }
 
-app.post('/api/generate/subtitles', (req, res) => {
+app.post('/api/generate/subtitles', requireAuth, (req, res) => {
   const v = validateGenerateBody(req, res);
   if (!v) return;
   const b = req.body || {};
@@ -566,7 +580,7 @@ app.post('/api/generate/subtitles', (req, res) => {
   res.status(202).json({ job: publicJob(job) });
 });
 
-app.post('/api/generate-script', async (req, res) => {
+app.post('/api/generate-script', requireAuth, async (req, res) => {
   const { idea, language } = req.body || {};
   const lang = LANGUAGES.includes(language) ? language : 'ar';
   if (!idea) {
@@ -580,7 +594,7 @@ app.post('/api/generate-script', async (req, res) => {
   }
 });
 
-app.get('/api/outputs/:file', (req, res) => {
+app.get('/api/outputs/:file', requireAuth, (req, res) => {
   const file = path.basename(req.params.file);
   if (file !== req.params.file || !/^[a-zA-Z0-9._-]+\.(mp4|srt|ass)$/.test(file)) {
     return res.status(400).json({ error: 'invalid_file' });
@@ -616,8 +630,15 @@ async function boot() {
   await fsp.mkdir(OUTPUT_DIR, { recursive: true });
   await fsp.mkdir(WORK_DIR, { recursive: true });
 
+  initDb();
+
   if (!isToolAvailable(FFMPEG_BIN)) {
     console.warn('[boot] WARNING: ffmpeg not found — rendering will fail');
+  }
+  if (config.SESSIONS_SECRET_GENERATED) {
+    console.warn(
+      '[boot] WARNING: SESSIONS_SECRET not set in .env — using a random secret; sessions reset on restart'
+    );
   }
 
   app.listen(PORT, HOST, () => {
