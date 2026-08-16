@@ -74,21 +74,47 @@ window.App = {
     tick();
   },
 
+  renderAuthBar(user) {
+    const bar = this.$('authBar');
+    if (!bar) return;
+    bar.classList.remove('hidden');
+    const email = document.createElement('span');
+    email.className = 'email';
+    email.textContent = user.email;
+    const logout = document.createElement('button');
+    logout.type = 'button';
+    logout.textContent = 'خروج';
+    logout.addEventListener('click', async () => {
+      try {
+        await this.fetchJson('/api/auth/logout', { method: 'POST' });
+      } catch (_) {}
+      window.location.href = '/auth.html';
+    });
+    bar.replaceChildren(email, logout);
+  },
+
   init() {
     this.mountTools();
-    this.fetchJson('/api/health')
+    this.fetchJson('/api/auth/me')
       .then((d) => {
-        const el = this.$('jobCount');
-        if (el) {
-          el.textContent = d.ok
-            ? 'Server healthy · ' +
-              d.jobCount +
-              ' jobs · Gemini ' +
-              (d.geminiConfigured ? 'configured' : 'NOT configured')
-            : '';
-        }
+        this.renderAuthBar(d.user);
+        this.fetchJson('/api/health')
+          .then((h) => {
+            const el = this.$('jobCount');
+            if (el) {
+              el.textContent = h.ok
+                ? 'Server healthy · ' +
+                  h.jobCount +
+                  ' jobs · Gemini ' +
+                  (h.geminiConfigured ? 'configured' : 'NOT configured')
+                : '';
+            }
+          })
+          .catch(() => {});
       })
-      .catch(() => {});
+      .catch(() => {
+        window.location.href = '/auth.html';
+      });
   },
 };
 

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>تسجيل الدخول — Shorts Captions</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d0f1a;
+      color: #e8eaf2;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 32px 16px;
+    }
+    .wrap { width: 100%; max-width: 400px; }
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    header h1 span { color: #62c8ff; }
+    header p { color: #8b90a5; font-size: 13px; margin-top: 6px; }
+    .card {
+      background: #171a2b;
+      border: 1px solid #262a40;
+      border-radius: 16px;
+      padding: 20px;
+    }
+    .segmented { display: flex; gap: 8px; background: #0f1220; border: 1px solid #2a2f4a; border-radius: 10px; padding: 4px; margin-bottom: 18px; }
+    .seg {
+      flex: 1;
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      background: transparent;
+      color: #8b90a5;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .seg.active { background: #62c8ff; color: #08131c; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #a7adc6; margin: 14px 0 6px; }
+    input {
+      width: 100%;
+      background: #0f1220;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      color: #e8eaf2;
+      padding: 12px 14px;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: #62c8ff; }
+    button.primary {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 13px;
+      margin-top: 18px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #62c8ff;
+      color: #08131c;
+      transition: transform 0.1s, opacity 0.15s;
+    }
+    button.primary:hover:not(:disabled) { transform: translateY(-1px); }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .error { color: #ff7d7d; font-size: 13px; margin-top: 10px; word-break: break-word; min-height: 18px; }
+    .hint { font-size: 12px; color: #6f7490; margin-top: 14px; text-align: center; }
+    .back { display: block; text-align: center; margin-top: 16px; color: #62c8ff; font-size: 13px; font-weight: 600; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Shorts <span>Captions</span></h1>
+      <p>أداة الكابشن العربية — سجّل دخولك للمتابعة</p>
+    </header>
+
+    <div class="card">
+      <div class="segmented" id="auth-tabs">
+        <button class="seg active" data-mode="login" type="button">تسجيل الدخول</button>
+        <button class="seg" data-mode="register" type="button">إنشاء حساب</button>
+      </div>
+
+      <div id="auth-emailRow">
+        <label for="auth-email">البريد الإلكتروني</label>
+        <input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" dir="ltr" style="text-align:right" />
+      </div>
+
+      <div id="auth-passRow">
+        <label for="auth-password">كلمة المرور</label>
+        <input id="auth-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+      </div>
+
+      <button class="primary" id="auth-submit" type="button">دخول</button>
+      <div class="error" id="auth-error"></div>
+      <p class="hint">كلمة المرور 8 أحرف على الأقل</p>
+      <a class="back" href="/">العودة إلى الصفحة الرئيسية</a>
+    </div>
+  </div>
+
+  <script src="/js/auth.js"></script>
+</body>
+</html>
