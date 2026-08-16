@@ -17,6 +17,7 @@ const SqliteSessionStore = require('./db/session-store');
 const authRoutes = require('./routes/auth');
 const { requireAuth } = require('./middleware/auth');
 const { initDb } = require('./db');
+const projectsRepo = require('./db/repositories/projects');
 
 const {
   PUBLIC_DIR,
@@ -79,6 +80,7 @@ const jobs = new Map();
 let jobQueue = Promise.resolve();
 
 function createJob({
+  userId,
   idea,
   script,
   language,
@@ -89,6 +91,7 @@ function createJob({
   const id = crypto.randomUUID();
   const job = {
     id,
+    userId,
     status: 'queued',
     idea: idea || null,
     script: script || null,
@@ -108,13 +111,35 @@ function createJob({
     meta: {},
   };
   jobs.set(id, job);
+  projectsRepo.create({
+    id,
+    userId,
+    idea: job.idea,
+    script: job.script,
+    language,
+    captionStyle,
+    timingMode,
+    wordsPerSegment,
+  });
   return job;
 }
 
 function updateJob(id, patch) {
   const job = jobs.get(id);
-  if (!job) return null;
-  Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+  if (job) Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+  const dbPatch = {
+    ...(patch.status !== undefined && { status: patch.status }),
+    ...(patch.script !== undefined && { script: patch.script }),
+    ...(patch.error !== undefined && { error: patch.error }),
+    ...(patch.errorCode !== undefined && { error_code: patch.errorCode }),
+    ...(patch.outputUrl !== undefined && { output_url: patch.outputUrl }),
+    ...(patch.subtitleSrtUrl !== undefined && { subtitle_srt_url: patch.subtitleSrtUrl }),
+    ...(patch.subtitleAssUrl !== undefined && { subtitle_ass_url: patch.subtitleAssUrl }),
+    ...(patch.estimatedDuration !== undefined && { estimated_duration: patch.estimatedDuration }),
+    ...(patch.completedAt !== undefined && { completed_at: patch.completedAt }),
+    ...(patch.meta !== undefined && { meta: patch.meta }),
+  };
+  if (Object.keys(dbPatch).length) projectsRepo.update(id, dbPatch);
   return job;
 }
 
@@ -466,6 +491,7 @@ async function processJob(job) {
 
     updateJob(job.id, {
       status: 'completed',
+      completedAt: new Date().toISOString(),
       outputFile,
       outputUrl: `/api/outputs/${outputFile}`,
       subtitleSrtUrl: `/api/outputs/${job.id}.srt`,
@@ -525,13 +551,16 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/jobs', requireAuth, (req, res) => {
-  res.json({ jobs: listJobs().map(publicJob) });
+  const rows = projectsRepo.listByUser(req.user.id);
+  res.json({ jobs: rows.map(projectsRepo.toPublicProject) });
 });
 
 app.get('/api/jobs/:id', requireAuth, (req, res) => {
-  const job = jobs.get(req.params.id);
-  if (!job) return res.status(404).json({ error: 'job_not_found' });
-  res.json({ job: publicJob(job) });
+  const row = projectsRepo.findById(req.params.id);
+  if (!row || row.user_id !== req.user.id) {
+    return res.status(404).json({ error: 'job_not_found' });
+  }
+  res.json({ job: projectsRepo.toPublicProject(row) });
 });
 
 function validateGenerateBody(req, res) {
@@ -570,6 +599,7 @@ app.post('/api/generate/subtitles', requireAuth, (req, res) => {
     ? Math.max(1, Math.min(10, wpsRaw))
     : DEFAULT_WORDS_PER_SEGMENT;
   const job = createJob({
+    userId: req.user.id,
     idea: v.idea,
     script: v.script,
     language: v.language,
@@ -599,6 +629,11 @@ app.get('/api/outputs/:file', requireAuth, (req, res) => {
   const file = path.basename(req.params.file);
   if (file !== req.params.file || !/^[a-zA-Z0-9._-]+\.(mp4|srt|ass)$/.test(file)) {
     return res.status(400).json({ error: 'invalid_file' });
+  }
+  const projectId = file.replace(/\.(mp4|srt|ass)$/, '');
+  const row = projectsRepo.findById(projectId);
+  if (!row || row.user_id !== req.user.id) {
+    return res.status(404).json({ error: 'file_not_found' });
   }
   const full = path.join(OUTPUT_DIR, file);
   if (!fs.existsSync(full)) {
