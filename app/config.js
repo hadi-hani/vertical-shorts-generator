@@ -16,21 +16,28 @@ if (fs.existsSync(ENV_FILE)) {
   }
 }
 
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
 let sessionsSecret = process.env.SESSIONS_SECRET || '';
 let sessionsSecretGenerated = false;
 if (!sessionsSecret) {
+  if (NODE_ENV === 'production') {
+    throw new Error('SESSIONS_SECRET must be set in .env when NODE_ENV=production');
+  }
   sessionsSecret = crypto.randomBytes(32).toString('hex');
   sessionsSecretGenerated = true;
 }
 
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SECURE === 'true';
+const TRUST_PROXY = parseInt(process.env.TRUST_PROXY || '0', 10);
 
 module.exports = {
   ROOT_DIR,
   PUBLIC_DIR: path.join(ROOT_DIR, 'public'),
   DATA_DIR: path.join(ROOT_DIR, 'data'),
-  OUTPUT_DIR: path.join(ROOT_DIR, 'data', 'output'),
-  WORK_DIR: path.join(ROOT_DIR, 'data', 'work'),
+  OUTPUT_DIR: process.env.OUTPUT_DIR || path.join(ROOT_DIR, 'data', 'output'),
+  WORK_DIR: process.env.WORK_DIR || path.join(ROOT_DIR, 'data', 'work'),
+  NODE_ENV,
   PORT: parseInt(process.env.PORT || '8283', 10),
   HOST: process.env.HOST || '0.0.0.0',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
@@ -38,5 +45,6 @@ module.exports = {
   SESSIONS_SECRET: sessionsSecret,
   SESSIONS_SECRET_GENERATED: sessionsSecretGenerated,
   COOKIE_SECURE,
+  TRUST_PROXY,
   DB_PATH: process.env.DB_PATH || path.join(ROOT_DIR, 'data', 'app.db'),
 };

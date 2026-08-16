@@ -4,6 +4,7 @@ const express = require('express');
 
 const usersRepo = require('../db/repositories/users');
 const authService = require('../services/auth');
+const { authLimiter } = require('../middleware/rate-limit');
 
 const router = express.Router();
 
@@ -14,38 +15,55 @@ function validateEmail(email) {
   return EMAIL_RE.test(String(email || '').trim());
 }
 
-router.post('/register', (req, res) => {
+router.post('/register', authLimiter, (req, res) => {
   const email = String((req.body || {}).email || '').trim().toLowerCase();
   const password = String((req.body || {}).password || '');
 
   if (!validateEmail(email)) {
-    return res.status(400).json({ error: 'invalid_email', message: 'Enter a valid email address' });
-  }
-  if (password.length < MIN_PASSWORD_LENGTH) {
     return res
       .status(400)
-      .json({ error: 'weak_password', message: 'Password must be at least 8 characters' });
+      .json({ error: 'invalid_email', message: 'أدخل بريداً إلكترونياً صالحاً' });
+  }
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({
+      error: 'weak_password',
+      message: 'كلمة المرور يجب ألا تقل عن 8 أحرف',
+    });
   }
   if (usersRepo.findByEmail(email)) {
-    return res.status(409).json({ error: 'email_taken', message: 'This email is already registered' });
+    return res
+      .status(409)
+      .json({ error: 'email_taken', message: 'هذا البريد الإلكتروني مسجّل مسبقاً' });
   }
 
   const user = usersRepo.create({ email, passwordHash: authService.hashPassword(password) });
-  req.session.userId = user.id;
-  res.status(201).json({ user: authService.toPublicUser(user) });
+  req.session.regenerate((err) => {
+    if (err) {
+      return res.status(500).json({ error: 'session_error', message: 'تعذّر بدء الجلسة' });
+    }
+    req.session.userId = user.id;
+    res.status(201).json({ user: authService.toPublicUser(user) });
+  });
 });
 
-router.post('/login', (req, res) => {
+router.post('/login', authLimiter, (req, res) => {
   const email = String((req.body || {}).email || '').trim().toLowerCase();
   const password = String((req.body || {}).password || '');
   const user = usersRepo.findByEmail(email);
 
   if (!user || !authService.verifyPassword(password, user.password_hash)) {
-    return res.status(401).json({ error: 'invalid_credentials', message: 'Incorrect email or password' });
+    return res
+      .status(401)
+      .json({ error: 'invalid_credentials', message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' });
   }
 
-  req.session.userId = user.id;
-  res.json({ user: authService.toPublicUser(user) });
+  req.session.regenerate((err) => {
+    if (err) {
+      return res.status(500).json({ error: 'session_error', message: 'تعذّر بدء الجلسة' });
+    }
+    req.session.userId = user.id;
+    res.json({ user: authService.toPublicUser(user) });
+  });
 });
 
 router.post('/logout', (req, res) => {
@@ -57,10 +75,12 @@ router.post('/logout', (req, res) => {
 
 router.get('/me', (req, res) => {
   if (!req.session || !req.session.userId) {
-    return res.status(401).json({ error: 'unauthorized', message: 'Not logged in' });
+    return res
+      .status(401)
+      .json({ error: 'unauthorized', message: 'يجب تسجيل الدخول أولاً' });
   }
   const user = usersRepo.findById(req.session.userId);
-  if (!user) return res.status(401).json({ error: 'unauthorized', message: 'Not logged in' });
+  if (!user) return res.status(401).json({ error: 'unauthorized', message: 'يجب تسجيل الدخول أولاً' });
   res.json({ user: authService.toPublicUser(user) });
 });
 
