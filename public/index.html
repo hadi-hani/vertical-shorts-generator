@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shorts Video MVP</title>
+  <title>Arabic Captions Generator</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -20,30 +20,6 @@
     header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
     header h1 span { color: #62c8ff; }
     header p { color: #8b90a5; font-size: 13px; margin-top: 6px; }
-    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-    .tab {
-      flex: 1;
-      background: #171a2b;
-      border: 1px solid #262a40;
-      color: #a7adc6;
-      border-radius: 12px;
-      padding: 12px 10px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }
-    .tab.active { background: #62c8ff; color: #08131c; border-color: #62c8ff; }
-    .tab.disabled { opacity: 0.5; cursor: not-allowed; }
-    .tab .badge {
-      display: block;
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-top: 4px;
-      opacity: 0.75;
-    }
     .tool-panel { margin-bottom: 16px; }
     .card {
       background: #171a2b;
@@ -151,38 +127,18 @@
     .dl-row { display: flex; gap: 10px; margin-top: 12px; }
     .dl-row .dl { flex: 1; margin-top: 0; padding: 10px; background: #0f1220; border: 1px solid #2a2f4a; border-radius: 10px; }
     .meta { text-align: center; }
-    .soon { text-align: center; padding: 40px 20px; }
-    .soon-badge {
-      display: inline-block;
-      background: #2a2f4a;
-      color: #a7adc6;
-      border-radius: 99px;
-      padding: 4px 14px;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-    }
-    .soon-title { font-size: 18px; margin: 14px 0 8px; }
-    .soon p { max-width: 380px; margin: 0 auto; }
     .jobs { font-size: 12px; color: #6f7490; margin-top: 12px; text-align: center; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <h1>Shorts <span>Video</span> MVP</h1>
-      <p>Turn a one-line idea into a 9:16 short video with voice-over and animated subtitles</p>
+      <h1>Shorts <span>Captions</span></h1>
+      <p>Turn a one-line idea into a 9:16 Arabic short with voice-over and animated subtitles</p>
     </header>
-
-    <nav class="tabs">
-      <button class="tab active" data-tool="subtitles" type="button">Subtitles &amp; Captions</button>
-      <button class="tab disabled" data-tool="footage" type="button">Video &amp; Footage Builder <span class="badge">Coming Soon</span></button>
-    </nav>
 
     <main>
       <section class="tool-panel" id="tool-subtitles"></section>
-      <section class="tool-panel hidden" id="tool-footage"></section>
     </main>
 
     <p class="jobs" id="jobCount"></p>
@@ -190,6 +146,5 @@
 
   <script src="/js/app.js"></script>
   <script src="/js/tools/subtitles.js"></script>
-  <script src="/js/tools/footage.js"></script>
 </body>
 </html>

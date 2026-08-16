@@ -35,21 +35,6 @@ window.App = {
     }
   },
 
-  initTabs() {
-    document.querySelectorAll('.tab').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (btn.classList.contains('disabled')) return;
-        const name = btn.dataset.tool;
-        document
-          .querySelectorAll('.tab')
-          .forEach((b) => b.classList.toggle('active', b === btn));
-        document.querySelectorAll('.tool-panel').forEach((p) => {
-          this.show(p, p.id === 'tool-' + name);
-        });
-      });
-    });
-  },
-
   /**
    * Poll a job until a terminal state, calling back on each tick.
    *   onStatus(job)  — every poll tick
@@ -90,7 +75,6 @@ window.App = {
   },
 
   init() {
-    this.initTabs();
     this.mountTools();
     this.fetchJson('/api/health')
       .then((d) => {
@@ -110,6 +94,5 @@ window.App = {
 
 document.addEventListener('DOMContentLoaded', () => {
   App.registerTool('subtitles', window.SubtitlesTool);
-  App.registerTool('footage', window.FootageTool);
   App.init();
 });

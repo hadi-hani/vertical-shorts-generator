@@ -3,24 +3,17 @@
 /* ------------------------------------------------------------------ */
 /* Caption engine: segmentation + ASS/SRT builders                     */
 /*                                                                     */
-/* The three caption styles:                                           */
+/* The two caption styles:                                             */
 /*   word        — Word by Word: each word appears alone, pops and     */
 /*                 fades, quickly, one after another.                  */
-/*   sentence    — Highlighted Sentence: the whole sentence stays      */
-/*                 visible while the active word is tinted + popped,   */
-/*                 moving word to word in sync with the audio.         */
 /*   progressive — Progressive Word Delivery: words accumulate until   */
 /*                 the sentence is complete, then it rolls over.       */
 /*                                                                     */
 /* Timing: word-level timestamps are aligned to the script text by matching
- *   normalized word keys (never by array index), then smoothed into short,
- *   regular-looking windows. When too few words match, each sentence is
- *   split evenly across its own span instead. */
+  *   normalized word keys (never by array index), then smoothed into short,
+  *   regular-looking windows. When too few words match, each sentence is
+  *   split evenly across its own span instead. */
 /* ------------------------------------------------------------------ */
-
-const ASS_ACCENT = { en: '&H62C8FF&', ar: '&H47F7F0&' };
-const ASS_DIM = '&H6A6A6A&';
-const ASS_WHITE = '&HFFFFFF&';
 
 // Long sentences are split into captions of at most this many words so a
 // single caption stays readable on a narrow phone screen.
@@ -152,7 +145,7 @@ function timingKey(raw) {
 
 /**
  * Align TTS word timings to the script tokens by matching normalized word
- * keys in order (like associateEmojis does for emoji groups). Tolerates
+ * keys in order. Tolerates
  * punctuation/contraction differences and extra/missing timing words.
  * Returns `{ words, matched }` where `words` is an array aligned 1:1 with
  * `tokens` (missing entries interpolated) and `matched` is the count of
@@ -344,63 +337,7 @@ function wordByWordEvents(seg, y) {
   return out;
 }
 
-/** Style 2 — Highlighted Sentence: full line, active word tinted only. */
-function highlightSentenceEvents(seg, language, y) {
-  const words = seg.words;
-  const n = words.length;
-  if (!n) return [];
-  const tokens = words.map((w) => w.text);
-  const size = sentenceSize(tokens);
-  const accent = ASS_ACCENT[language] || ASS_ACCENT.en;
-  const isAr = language === 'ar';
-  // Break the words into display lines (LINE_MAX_CHARS visible chars each) so
-  // the full sentence always fits the screen at the larger font size.
-  const lines = [];
-  {
-    let cur = [];
-    let chars = 0;
-    for (const tok of tokens) {
-      const L = Array.from(tok).length + (cur.length ? 1 : 0);
-      if (cur.length && chars + L > LINE_MAX_CHARS) {
-        lines.push(cur);
-        cur = [tok];
-        chars = Array.from(tok).length;
-      } else {
-        cur.push(tok);
-        chars += L;
-      }
-    }
-    if (cur.length) lines.push(cur);
-  }
-  const out = [];
-  for (let k = 0; k < n; k++) {
-    const start = words[k].start;
-    const end = k + 1 < n ? words[k + 1].start : seg.end;
-    const fade = k === 0 ? '\\fad(60,0)' : k === n - 1 ? '\\fad(0,60)' : '';
-    // Color-only highlight: changing \1c never reflows the line, so the
-    // active word is tinted without the whole sentence shifting (the RTL
-    // Arabic layout-shift bug). No \fscx / \t scale is allowed here.
-    let idx = 0;
-    const joined = lines
-      .map((group) => {
-        const parts = group.map((tok) => {
-          const gi = idx++;
-          return gi === k ? `{\\1c${accent}}${tok}` : `{\\1c${ASS_DIM}}${tok}`;
-        });
-        // Arabic: libass lays every line out left-to-right (no bidi), so we
-        // reverse the words of each display line. Combined with the
-        // right-to-left reading direction the result reads correctly, and
-        // the highlight travels right-to-left word by word.
-        if (isAr) parts.reverse();
-        return parts.join(' ');
-      })
-      .join('\\N');
-    out.push(eventLine(start, end, leadingTags(y, size, fade) + joined));
-  }
-  return out;
-}
-
-/** Style 3 — Progressive Word Delivery: words accumulate in the line. */
+/** Style 2 — Progressive Word Delivery: words accumulate in the line. */
 function progressiveEvents(seg, y) {
   const words = seg.words;
   const n = words.length;
@@ -428,15 +365,13 @@ function progressiveEvents(seg, y) {
 function buildAss(segments, language, options = {}) {
   const style = options.style || 'word';
   const y = options.y != null ? options.y : 900;
-  const font = options.font || 'DejaVu Sans';
+  const font = options.font || 'Noto Naskh Arabic';
   const events = [];
   for (const seg of segments) {
     const built =
-      style === 'sentence'
-        ? highlightSentenceEvents(seg, language, y)
-        : style === 'progressive'
-          ? progressiveEvents(seg, y)
-          : wordByWordEvents(seg, y);
+      style === 'progressive'
+        ? progressiveEvents(seg, y)
+        : wordByWordEvents(seg, y);
     events.push(...built);
   }
 

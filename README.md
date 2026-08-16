@@ -1,45 +1,33 @@
-# Vertical Shorts Video Generator (MVP)
+# Arabic Subtitles & Captions Generator
 
-AI-powered **vertical (9:16) short-form video generator** with neural text-to-speech
-and animated, word-by-word subtitles — built for TikTok / YouTube Shorts / Reels.
+Arabic-only **vertical (9:16) short-form video generator** with neural Arabic
+text-to-speech and animated, word-by-word subtitles — built for TikTok /
+YouTube Shorts / Reels.
 
 Give it a one-line idea (or a full script), and it produces a ready-to-post
-`1080x1920` MP4 with a voice-over and kinetic captions that appear in sync with
-the speech. The web UI is split into two tools:
+`1080x1920` MP4 with an Arabic voice-over and animated captions that appear in
+sync with the speech. The web UI is a single tool:
 
-- **Subtitles & Captions** — three animated caption styles with downloadable
-  `.srt` / `.ass` files (active now).
-- **Video & Footage Builder** — footage backgrounds with crossfading scenes
-  (coming soon; the API is already available).
+- **Subtitles & Captions** — two animated caption styles with downloadable
+  `.srt` / `.ass` files.
 
 ## Features
 
-- **Script generation** — auto-writes an engaging 25–35s voice-over script from a
-  one-line idea using Google Gemini (or pass your own script directly).
-- **Three caption styles**:
-  - **Word by Word** — each word appears alone with a quick pop and fade, in sync
-    with the voice-over.
-  - **Highlighted Sentence** — the full sentence stays visible while the spoken
-    word is highlighted and enlarged as it moves through the line.
+- **Script generation** — auto-writes an engaging 25–35s Arabic voice-over
+  script from a one-line idea using Google Gemini (or pass your own script
+  directly).
+- **Two caption styles**:
+  - **Word by Word** — each word appears alone with a quick pop and fade, in
+    sync with the voice-over.
   - **Progressive Word Delivery** — words accumulate line by line until the
     sentence is complete, then roll over.
-- **Two timing modes** — automatic **word-level timestamps** from the TTS engine,
-  or a **fixed words-per-caption** fallback (2–12 words) when timestamps are
-  missing or when you want even-sized caption lines.
-- **Emoji accents (optional)** — color emojis baked into the script (Gemini
-  suggests them automatically; emojis are auto-inserted when the script lacks
-  them) and rendered beside the words they follow.
+- **Two timing modes** — automatic **word-level timestamps** from the TTS
+  engine, or a **fixed words-per-caption** fallback (2–10 words) when
+  timestamps are missing or when you want even-sized caption lines.
 - **Subtitle file downloads** — every job also produces a style-independent
   `.srt` and the styled `.ass`, served via `/api/outputs/:file`.
-- **Footage API** — captions near the bottom over real b-roll, with three
-  background options: **videos**, **photos** (both via the Pexels API), or
-  **animated icons** (via Iconify).
-- **Multi-scene footage** — long scripts are split into scenes (one per sentence)
-  and each scene gets its own footage clip/photo/icon; scenes crossfade into each
-  other. Icons are auto-picked per scene from the text (keyword map + Iconify
-  search), including Arabic.
-- **Neural TTS** — high-quality voice-over via Microsoft Edge neural voices
-  (`edge-tts`), with English and Arabic out of the box.
+- **Neural TTS** — high-quality Arabic voice-over via Microsoft Edge neural
+  voices (`edge-tts`).
 - **Animated captions** — rendered as ASS subtitles burned into the video (RTL
   Arabic supported).
 - **Smart word timing** — precise timestamps from the TTS engine; falls back to
@@ -110,68 +98,21 @@ root, which is loaded automatically and git-ignored).
 |------------------|-------------------------|---------------------------------------------------------|
 | `GEMINI_API_KEY` | *(empty)*               | Gemini key — required only for script auto-generation. If empty, you must supply a `script` to the API. |
 | `GEMINI_MODEL`   | `gemini-2.5-flash`      | Gemini model for script writing.                       |
-| `PEXELS_API_KEY` | *(empty)*               | Pexels key — required for the **video** and **image** footage backgrounds. Icon backgrounds work without it. |
 | `PORT`           | `8283`                  | HTTP port.                                              |
 | `HOST`           | `0.0.0.0`               | Bind address.                                           |
 
-### Languages, voices & fonts
+The Arabic voice and font are defined in `app/server.js`:
 
-Languages are defined in `app/server.js`:
-
-- English — voice `en-US-AriaNeural`, font `DejaVu Sans`
-- Arabic — voice `ar-SA-HamedNeural`, font `Noto Naskh Arabic`
-
-Add a new language by extending the `VOICES` and `FONTS` maps.
+- Voice — `ar-SA-HamedNeural`
+- Font — `Noto Naskh Arabic`
 
 ## API
 
-### `POST /api/generate` *(deprecated)*
-
-Legacy endpoint — same behavior as `/api/generate/emoji`.
-
-### `POST /api/generate/emoji`
-
-Create a **emoji captions** job: captions centered on a dark gradient, with color
-emojis rendered beside the words they follow. Provide **either** an `idea` (Gemini
-writes the script) **or** a `script`. If the resulting script has no emojis, they
-are added automatically (Gemini first, keyword-based fallback).
-
-```sh
-curl -X POST http://localhost:8283/api/generate/emoji \
-  -H "Content-Type: application/json" \
-  -d '{"script":"Hello world! This is my first generated short. 🚀","language":"en"}'
-```
-
-### `POST /api/generate/footage`
-
-Create a **footage background** job: captions near the bottom over b-roll. Choose
-the background via `background`:
-
-- `"video"` — looping Pexels video clip
-- `"image"` — Pexels photo (Ken Burns zoom)
-- `"icon"` — animated Iconify icon (no Pexels key needed)
-
-`query` is optional — when omitted it is auto-derived from the idea/script.
-
-```sh
-curl -X POST http://localhost:8283/api/generate/footage \
-  -H "Content-Type: application/json" \
-  -d '{"script":"Cooking eggs for breakfast is quick and fun.","language":"en","background":"icon","query":"cooking"}'
-```
-
-Video/image backgrounds require `PEXELS_API_KEY`; without it the job fails with
-`pexels_not_configured`.
-
-When a script has multiple sentences, the footage is split into **scenes** (one per
-sentence, up to 6) and each scene gets its own clip/photo/icon, joined by
-crossfades. `meta.sceneCount` and `meta.scenes[]` (`text`, `query`, `source`,
-`icon`, `url`) describe the split.
-
 ### `POST /api/generate/subtitles`
 
-Create a **Subtitles & Captions** job: captions centered on a dark gradient, with
-your choice of caption style and timing. Provide **either** an `idea` (Gemini
-writes the script) **or** a `script`.
+Create a **Subtitles & Captions** job: captions centered on a dark gradient,
+with your choice of caption style and timing. Provide **either** an `idea`
+(Gemini writes the script) **or** a `script`. Language is Arabic only.
 
 Body:
 
@@ -179,16 +120,15 @@ Body:
 |-------------------|--------------------------------------------------------------|---------|
 | `idea`            | one-line idea (script auto-generated)                        | —       |
 | `script`          | full script text                                             | —       |
-| `language`        | `en` or `ar`                                                 | `en`    |
-| `captionStyle`    | `word` \| `sentence` \| `progressive`                        | `word`  |
+| `language`        | `ar`                                                         | `ar`    |
+| `captionStyle`    | `word` \| `progressive`                                      | `word`  |
 | `timingMode`      | `auto` (ms word timestamps) \| `words` (fixed words/line)    | `auto`  |
-| `wordsPerSegment` | 2–12 (used when `timingMode` is `words`)                     | `4`     |
-| `emojis`          | `true`/`false` — add emoji accents                           | `true`  |
+| `wordsPerSegment` | 2–10 (used when `timingMode` is `words`)                     | `4`     |
 
 ```sh
 curl -X POST http://localhost:8283/api/generate/subtitles \
   -H "Content-Type: application/json" \
-  -d '{"idea":"How to brew great coffee","language":"en","captionStyle":"sentence","timingMode":"auto","emojis":true}'
+  -d '{"idea":"كيف تحضّر القهوة المثالية","language":"ar","captionStyle":"word","timingMode":"auto"}'
 ```
 
 ### `GET /api/jobs/:id`
@@ -218,7 +158,7 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 
 | Endpoint              | Method | Description                                  |
 |-----------------------|--------|----------------------------------------------|
-| `/api/health`         | GET    | Health + feature flags (gemini/pexels/ffmpeg). |
+| `/api/health`         | GET    | Health + feature flags (gemini/ffmpeg).      |
 | `/api/jobs`           | GET    | List all jobs.                               |
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
 
@@ -228,18 +168,17 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 .
 ├── app/
 │   ├── server.js            # Express API + pipeline orchestration
-│   ├── captions.js          # Caption engine: segmentation, 3 ASS styles, .srt
+│   ├── captions.js          # Caption engine: segmentation, 2 ASS styles, .srt
 │   ├── tts_word_timings.py  # edge-tts audio + word-boundary timing extraction
 │   └── align_words.py       # whisper-based alignment fallback
 ├── public/                  # Web UI
-│   ├── index.html           # Tab shell (Subtitles & Captions / Footage Builder)
+│   ├── index.html           # Single-page Arabic captions UI
 │   └── js/
-│       ├── app.js           # Shared helpers: tabs, fetch, job polling
-│       └── tools/           # One module per tool (subtitles.js, footage.js)
+│       ├── app.js           # Shared helpers: fetch, job polling
+│       └── tools/subtitles.js  # Captions tool
 ├── data/
 │   ├── output/              # Rendered MP4s + .srt/.ass (git-ignored)
-│   ├── work/                # Per-job scratch space (git-ignored)
-│   └── emoji_cache/         # Cached emoji PNGs (git-ignored)
+│   └── work/                # Per-job scratch space (git-ignored)
 ├── Dockerfile
 ├── docker-compose.yml
 └── package.json
@@ -249,15 +188,16 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 
 **`[AVFilterGraph] No such filter: 'ass'` or "No option name near ..."**
 
-Your ffmpeg build lacks `libass`. Install one that includes it, or let the app use
-a bundled static build:
+Your ffmpeg build lacks `libass`. Install one that includes it, or let the app
+use a bundled static build:
 
 ```sh
 npm install ffmpeg-static
 ```
 
 `ffmpeg-static` ships a full static ffmpeg (with `libass`, `libx264`, `aac`);
-`app/server.js` detects it automatically and uses it instead of the system binary.
+`app/server.js` detects it automatically and uses it instead of the system
+binary.
 
 **"Gemini is not configured"**
 
@@ -266,8 +206,8 @@ Script auto-generation needs a key. Either set `GEMINI_API_KEY` or provide a
 
 **Audio works but no captions / fonts look wrong**
 
-Make sure `libass`-capable ffmpeg and the fonts in `FONTS` (`fonts-noto-core`,
-`fonts-dejavu-core`) are installed.
+Make sure `libass`-capable ffmpeg and the Arabic font in `FONTS`
+(`fonts-noto-core`) are installed.
 
 ## License
 

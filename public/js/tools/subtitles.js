@@ -10,13 +10,11 @@ window.SubtitlesTool = (function () {
     captionStyle: 'word',
     timingMode: 'auto',
     wordsPerSegment: 4,
-    emojis: true,
   };
   const STORE_KEY = 'shortgen.subtitles.state';
 
   const STYLE_INFO = {
     word: 'Each word appears alone with a quick pop, timed to the voice-over. Timing is automatic.',
-    sentence: 'The full sentence stays on screen while the spoken word is highlighted. Arabic highlights move right-to-left.',
     progressive: 'Words accumulate line by line until the sentence is complete, then roll over.',
   };
   const TIMING_INFO = {
@@ -25,7 +23,6 @@ window.SubtitlesTool = (function () {
   };
   const STYLE_LABEL = {
     word: 'Word by Word',
-    sentence: 'Highlighted Sentence',
     progressive: 'Progressive',
   };
 
@@ -64,16 +61,9 @@ window.SubtitlesTool = (function () {
       '    <textarea id="sub-script" placeholder="Paste a full script, or let Gemini write one…"></textarea>',
       '    <button class="secondary" id="sub-genScript" type="button">Generate script</button>',
       '  </div>',
-      '  <label for="sub-language">Language</label>',
-      '  <select id="sub-language" disabled>',
-      '    <option value="ar">العربية (RTL)</option>',
-      '    <option value="en" disabled>English — قريباً (Coming soon)</option>',
-      '  </select>',
-      '  <p class="hint">Captions currently focus on Arabic. The English option arrives soon.</p>',
       '  <label>Caption style</label>',
       '  <div class="segmented" id="sub-style">',
       '    <button class="seg" data-style="word" type="button">Word by Word</button>',
-      '    <button class="seg" data-style="sentence" type="button">Highlighted Sentence</button>',
       '    <button class="seg" data-style="progressive" type="button">Progressive</button>',
       '  </div>',
       '  <p class="hint" id="sub-styleInfo"></p>',
@@ -90,11 +80,10 @@ window.SubtitlesTool = (function () {
       '      <p class="hint">2–10 words per caption line (default 4).</p>',
       '    </div>',
       '  </div>',
-      '  <label class="check"><input id="sub-emojis" type="checkbox" checked /> Add emoji accents <span class="hint">(optional)</span></label>',
       '  <div class="btns">',
       '    <button class="primary" id="sub-generate" type="button">Generate video</button>',
       '  </div>',
-      '  <p class="hint">Voice-over + animated subtitles render into a 1080x1920 MP4 with downloadable .srt and .ass files. Scripts must stay under 60 seconds of speech.</p>',
+      '  <p class="hint">Arabic voice-over + animated subtitles render into a 1080x1920 MP4 with downloadable .srt and .ass files. Scripts must stay under 60 seconds of speech.</p>',
       '</div>',
       '<div class="card status hidden" id="sub-status">',
       '  <div class="stage" id="sub-statusStage">Queued</div>',
@@ -124,11 +113,6 @@ window.SubtitlesTool = (function () {
       state.script = e.target.value;
       saveState();
     });
-    container.querySelector('#sub-language').addEventListener('change', (e) => {
-      state.language = 'ar';
-      e.target.value = 'ar';
-      saveState();
-    });
 
     container.querySelector('#sub-style').addEventListener('click', (e) => {
       const btn = e.target.closest('.seg');
@@ -155,11 +139,6 @@ window.SubtitlesTool = (function () {
       if (Number.isFinite(v)) {
         state.wordsPerSegment = Math.max(2, Math.min(10, v));
       }
-      saveState();
-    });
-
-    container.querySelector('#sub-emojis').addEventListener('change', (e) => {
-      state.emojis = e.target.checked;
       saveState();
     });
 
@@ -210,7 +189,6 @@ window.SubtitlesTool = (function () {
             captionStyle: state.captionStyle,
             timingMode: state.timingMode,
             wordsPerSegment: state.wordsPerSegment,
-            emojis: state.emojis,
           }),
         });
         const id = data.job.id;
@@ -241,8 +219,6 @@ window.SubtitlesTool = (function () {
     const $ = App.$;
     container.querySelector('#sub-idea').value = state.idea;
     container.querySelector('#sub-script').value = state.script;
-    container.querySelector('#sub-language').value = state.language;
-    container.querySelector('#sub-emojis').checked = state.emojis;
     container.querySelector('#sub-wps').value = state.wordsPerSegment;
     refreshSegmented(container, '#sub-style', '.seg', state.captionStyle);
     refreshSegmented(container, '#sub-timing', '.seg', state.timingMode);
@@ -305,7 +281,6 @@ window.SubtitlesTool = (function () {
     if (m.captionStyle !== 'word') {
       bits.push('Timing: ' + (m.timingMode === 'words' ? m.wordsPerSegment + ' words per line' : 'Word-level'));
     }
-    bits.push('Emojis: ' + (m.emojis ? m.emojiCount : 'off'));
     if (m.wordCount != null) bits.push(m.wordCount + ' words');
     if (m.audioDuration != null) bits.push(m.audioDuration + 's audio');
     $('sub-meta').textContent = bits.join(' · ');
