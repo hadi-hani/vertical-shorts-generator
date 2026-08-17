@@ -18,11 +18,22 @@ function verifyPassword(password, stored) {
 }
 
 function toPublicUser(user) {
-  return { id: user.id, email: user.email, createdAt: user.created_at };
+  return {
+    id: user.id,
+    email: user.email,
+    createdAt: user.created_at,
+    emailVerified: Boolean(user.email_verified),
+    plan: user.plan || 'free',
+  };
+}
+
+function randomToken() {
+  return randomBytes(32).toString('hex');
 }
 
 module.exports = {
   hashPassword,
   verifyPassword,
   toPublicUser,
+  randomToken,
 };

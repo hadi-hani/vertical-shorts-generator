@@ -46,6 +46,11 @@ const usersRepo = require('./db/repositories/users');
 const { log } = require('./lib/logger');
 const { requireAdmin } = require('./middleware/admin');
 const { backupDb } = require('./services/backup');
+const redisCache = require('./services/redis');
+const storage = require('./services/storage');
+
+const storageUploadOutputs = (jobId, userId, files) =>
+  storage.isConfigured() ? storage.uploadOutputs(jobId, userId, files) : Promise.resolve(null);
 
 const {
   PUBLIC_DIR,
@@ -558,12 +563,19 @@ async function processJob(row) {
       return;
     }
 
+    // Best-effort offload to S3 (when configured); falls back to local URLs.
+    const remote = await storageUploadOutputs(jobId, row.user_id, {
+      '.mp4': outputPath,
+      '.srt': path.join(userDir, `${jobId}.srt`),
+      '.ass': path.join(userDir, `${jobId}.ass`),
+    });
+
     updateJob(jobId, {
       status: 'completed',
       completedAt: new Date().toISOString(),
-      outputUrl: `/api/outputs/${outputFile}`,
-      subtitleSrtUrl: `/api/outputs/${jobId}.srt`,
-      subtitleAssUrl: `/api/outputs/${jobId}.ass`,
+      outputUrl: (remote && remote['.mp4']) || `/api/outputs/${outputFile}`,
+      subtitleSrtUrl: (remote && remote['.srt']) || `/api/outputs/${jobId}.srt`,
+      subtitleAssUrl: (remote && remote['.ass']) || `/api/outputs/${jobId}.ass`,
       meta: {
         stage: 'done',
         style: STYLE_SUBTITLES,
@@ -887,6 +899,7 @@ app.delete('/api/jobs/:id', requireAuth, (req, res) => {
   }
   projectsRepo.remove(req.params.id);
   deleteProjectFiles(row.user_id, req.params.id);
+  storage.removeOutputs(req.params.id, row.user_id).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -977,7 +990,10 @@ app.post('/api/generate-script', requireAuth, generateLimiter, async (req, res) 
     });
   }
   try {
-    const script = await generateScript(idea);
+    const key = 'script:' + crypto.createHash('sha256').update(idea.trim()).digest('hex');
+    const script = await redisCache.wrap(key, config.SCRIPT_CACHE_TTL_SECONDS, () =>
+      generateScript(idea)
+    );
     res.json({ idea, script, language: lang });
   } catch (err) {
     res.status(500).json({ error: err.code || 'gemini_error', message: err.message });
@@ -1067,6 +1083,8 @@ async function boot() {
   await fsp.mkdir(WORK_DIR, { recursive: true });
 
   initDb();
+  redisCache.init();
+  storage.init();
 
   recoverStaleJobs();
   sweepWorkDirs();

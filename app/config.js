@@ -87,6 +87,8 @@ module.exports = {
   PAYPAL_WEBHOOK_ID: process.env.PAYPAL_WEBHOOK_ID || '',
   PAYPAL_PRICE: process.env.PAYPAL_PRICE || '9.99',
   PAYPAL_BASE_URL: process.env.PAYPAL_BASE_URL || '', // public base used for PayPal return URLs
+  PUBLIC_BASE_URL:
+    process.env.PUBLIC_BASE_URL || process.env.PAYPAL_BASE_URL || '', // public origin for emailed links
   ADMIN_EMAILS: (process.env.ADMIN_EMAILS || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
@@ -95,6 +97,26 @@ module.exports = {
   CORS_ORIGIN: process.env.CORS_ORIGIN || '',
   SENTRY_DSN: process.env.SENTRY_DSN || '',
   LOG_DIR: process.env.LOG_DIR || '',
+
+  /* Optional email (verification + password reset): provider resend|sendgrid.
+   * Empty provider = email flows work locally but no mail is delivered. */
+  EMAIL_PROVIDER: process.env.EMAIL_PROVIDER || '',
+  RESEND_API_KEY: process.env.RESEND_API_KEY || '',
+  SENDGRID_API_KEY: process.env.SENDGRID_API_KEY || '',
+  EMAIL_FROM: process.env.EMAIL_FROM || '',
+
+  /* Optional Redis caching (script generation). Empty = no cache. */
+  REDIS_URL: process.env.REDIS_URL || '',
+  SCRIPT_CACHE_TTL_SECONDS: parseInt(process.env.SCRIPT_CACHE_TTL_SECONDS || '3600', 10),
+
+  /* Optional S3/S3-compatible offload of finished outputs. */
+  S3_ENDPOINT: process.env.S3_ENDPOINT || '',
+  S3_REGION: process.env.S3_REGION || 'us-east-1',
+  S3_BUCKET: process.env.S3_BUCKET || '',
+  S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID || '',
+  S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY || '',
+  S3_PUBLIC_BASE_URL: process.env.S3_PUBLIC_BASE_URL || '',
+
   BACKUP_DIR: process.env.BACKUP_DIR || path.join(ROOT_DIR, 'data', 'backups'),
   BACKUP_KEEP: parseInt(process.env.BACKUP_KEEP || '5', 10),
   BACKUP_INTERVAL_MS: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
