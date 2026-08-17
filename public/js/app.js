@@ -25,7 +25,7 @@ window.App = {
   },
 
   registerTool(name, tool) {
-    this.tools[name] = tool;
+    if (tool) this.tools[name] = tool;
   },
 
   mountTools() {
@@ -90,7 +90,10 @@ window.App = {
       } catch (_) {}
       window.location.href = '/auth.html';
     });
-    bar.replaceChildren(email, logout);
+    const link = document.createElement('a');
+    link.href = '/projects.html';
+    link.textContent = 'مشاريعي';
+    bar.replaceChildren(email, link, logout);
   },
 
   init() {
@@ -119,6 +122,6 @@ window.App = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  App.registerTool('subtitles', window.SubtitlesTool);
+  if (window.SubtitlesTool) App.registerTool('subtitles', window.SubtitlesTool);
   App.init();
 });

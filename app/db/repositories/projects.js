@@ -49,6 +49,10 @@ function listByUser(userId) {
     .all(userId);
 }
 
+function remove(id) {
+  return getDb().prepare('DELETE FROM projects WHERE id = ?').run(id).changes > 0;
+}
+
 function update(id, patch) {
   const keys = Object.keys(patch).filter((k) => UPDATABLE.has(k));
   if (keys.length) {
@@ -109,4 +113,4 @@ function toPublicProject(row) {
   };
 }
 
-module.exports = { create, findById, listByUser, update, toPublicProject, parseMeta, statusCounts };
+module.exports = { create, findById, listByUser, remove, update, toPublicProject, parseMeta, statusCounts };

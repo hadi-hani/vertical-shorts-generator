@@ -181,6 +181,18 @@ async function main() {
     check("user B cannot download A's file (404)", (await request('GET', `/api/outputs/${firstJobId}.mp4`, { cookie: jarB })).status === 404);
     check('A can still read own job', (await request('GET', `/api/jobs/${firstJobId}`, { cookie: authedJar })).status === 200);
 
+    const delAnon = await request('DELETE', `/api/jobs/${firstJobId}`);
+    check('DELETE requires auth', delAnon.status === 401);
+    const delB = await request('DELETE', `/api/jobs/${firstJobId}`, { cookie: jarB });
+    check("user B cannot delete A's job (404)", delB.status === 404);
+
+    const del = await request('DELETE', `/api/jobs/${firstJobId}`, { cookie: authedJar });
+    check('A deletes own job (200)', del.status === 200);
+    check('deleted job returns 404', (await request('GET', `/api/jobs/${firstJobId}`, { cookie: authedJar })).status === 404);
+    check('deleted output file returns 404', (await request('GET', `/api/outputs/${firstJobId}.mp4`, { cookie: authedJar })).status === 404);
+    const aList2 = await request('GET', '/api/jobs', { cookie: authedJar });
+    check('A has one project after delete', aList2.data && aList2.data.jobs.length === 1);
+
     console.log('----------------------------------------');
     console.log(`${checks - failures}/${checks} checks passed`);
   } finally {
