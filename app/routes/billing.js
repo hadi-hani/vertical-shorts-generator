@@ -152,10 +152,14 @@ router.post('/webhook', async (req, res) => {
 /* Simple Arabic pages shown after PayPal redirects the buyer back. */
 router.get('/success', (req, res) => {
   res.send(
-    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>شكراً</title></head>' +
-      '<body style="font-family:sans-serif;text-align:center;padding-top:3rem">' +
-      '<h2>تم تفعيل اشتراكك!</h2><p>قد يستغرق التفعيل دقيقة أو دقيقتين.</p>' +
-      '<p><a href="/projects">الذهاب إلى مشاريعي</a></p></body></html>'
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>شكراً</title>' +
+      '<meta http-equiv="refresh" content="4;url=/projects">' +
+      '</head><body style="font-family:sans-serif;text-align:center;padding-top:3rem">' +
+      '<h2>تم تفعيل اشتراكك!</h2>' +
+      '<p id="count">سيتم تحويلك إلى مشاريعك خلال 4 ثوانٍ…</p>' +
+      '<p><a href="/projects">الذهاب إلى مشاريعي الآن</a></p>' +
+      '<script>let n=4;setInterval(()=>{n--;if(n>0)document.getElementById("count").textContent="سيتم تحويلك إلى مشاريعك خلال "+n+" ثوانٍ…";},1000);</script>' +
+      '</body></html>'
   );
 });
 
