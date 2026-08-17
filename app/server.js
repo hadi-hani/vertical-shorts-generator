@@ -22,6 +22,22 @@ const billingRoutes = require('./routes/billing');
 const { requireAuth } = require('./middleware/auth');
 const { generateLimiter } = require('./middleware/rate-limit');
 const { httpError, normalizeError } = require('./lib/http-error');
+const metrics = require('./lib/metrics');
+
+/* Optional error tracking (Sentry). No-op when SENTRY_DSN is not set. */
+let Sentry = null;
+if (config.SENTRY_DSN) {
+  try {
+    Sentry = require('@sentry/node');
+    Sentry.init({
+      dsn: config.SENTRY_DSN,
+      environment: config.NODE_ENV,
+      tracesSampleRate: 0,
+    });
+  } catch (_) {
+    Sentry = null;
+  }
+}
 const { initDb, getDb } = require('./db');
 const projectsRepo = require('./db/repositories/projects');
 const usageRepo = require('./db/repositories/usage');
@@ -106,6 +122,23 @@ app.use(
 
 app.use('/api/auth', authRoutes);
 app.use('/api/billing', billingRoutes);
+
+/* Request tracing + metrics (after sessions so userId is available). */
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+    metrics.trackRequest(req.method, req.path, res.statusCode, durationMs);
+    log('info', 'request', {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Math.round(durationMs),
+      userId: (req.session && req.session.userId) || null,
+    });
+  });
+  next();
+});
 
 /* ------------------------------------------------------------------ */
 /* Job persistence + tiny sequential queue (reads/writes SQLite)        */
@@ -544,6 +577,7 @@ async function processJob(row) {
       },
     });
     usageRepo.increment(row.user_id, { videos: 0, seconds: Math.round(duration) });
+    metrics.recordJob('completed');
     log('info', 'job_completed', {
       jobId,
       userId,
@@ -556,6 +590,7 @@ async function processJob(row) {
       ? `Job exceeded the ${Math.round(JOB_TIMEOUT_MS / 1000)}s time limit`
       : err.message;
     log('error', 'job_failed', { jobId, userId, code, message });
+    metrics.recordJob('failed');
     updateJob(jobId, {
       status: 'failed',
       error: message,
@@ -765,6 +800,12 @@ app.get('/api/health', (req, res) => {
     geminiConfigured: Boolean(GEMINI_API_KEY),
     ffmpegAvailable: isToolAvailable('ffmpeg'),
   });
+});
+
+/* Prometheus text metrics — process counters (restart-reset). Safe to scrape:
+ * only request/job counters and durations, no user data. */
+app.get('/api/metrics', (req, res) => {
+  res.type('text/plain').send(metrics.formatPrometheus());
 });
 
 app.get('/api/jobs', requireAuth, (req, res) => {
@@ -997,6 +1038,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   const { status, code, message } = normalizeError(err);
   if (status >= 500) {
+    if (Sentry) Sentry.captureException(err);
     log('error', 'request_failed', {
       method: req.method,
       path: req.path,

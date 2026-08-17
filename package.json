@@ -13,6 +13,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@sentry/node": "^10.70.0",
     "better-sqlite3": "^13.0.3",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
