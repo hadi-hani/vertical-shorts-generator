@@ -178,6 +178,7 @@
 # Runtime data
 data/output/
 data/work/
+data/backups/
 data/app.db
 data/app.db-shm
 data/app.db-wal
