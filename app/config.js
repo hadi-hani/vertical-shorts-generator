@@ -47,4 +47,5 @@ module.exports = {
   COOKIE_SECURE,
   TRUST_PROXY,
   DB_PATH: process.env.DB_PATH || path.join(ROOT_DIR, 'data', 'app.db'),
+  JOB_TIMEOUT_MS: parseInt(process.env.JOB_TIMEOUT_MS || '600000', 10),
 };

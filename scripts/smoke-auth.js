@@ -154,6 +154,10 @@ async function main() {
       const final = await pollJob(jobId, authedJar, 180000);
       check(`${style} job completed`, final === 'completed');
 
+      const detail = await request('GET', `/api/jobs/${jobId}`, { cookie: authedJar });
+      const dJob = detail.data && detail.data.job;
+      check(`${style} job has completion meta`, Boolean(dJob && dJob.meta && dJob.meta.stage === 'done'));
+
       const mp4 = await request('GET', `/api/outputs/${jobId}.mp4`, { cookie: authedJar });
       check(`${style} mp4 downloadable`, mp4.status === 200);
       const srt = await request('GET', `/api/outputs/${jobId}.srt`, { cookie: authedJar });
