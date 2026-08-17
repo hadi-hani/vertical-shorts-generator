@@ -1,5 +1,7 @@
 # Arabic Subtitles & Captions Generator
 
+[![CI](https://github.com/hadi-hani/vertical-shorts-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/hadi-hani/vertical-shorts-generator/actions/workflows/ci.yml)
+
 Arabic-only **vertical (9:16) short-form video generator** with neural Arabic
 text-to-speech and animated, word-by-word subtitles — built for TikTok /
 YouTube Shorts / Reels.
@@ -62,6 +64,10 @@ sync with the speech. The web UI is a single tool:
   failed jobs and the queue plus job/success/duration/storage counters, a
   richer `/api/health` (SQLite + disk + FFmpeg), and automatic SQLite online
   backups (daily, keep N).
+- **Production hardening** — `helmet` security headers, gzip compression,
+  optional gated CORS, per-IP rate limits on generation, centralized error
+  handling (JSON API errors + Arabic 404/500 pages), and startup environment
+  validation that refuses to boot in production with missing required keys.
 
 ## How it works
 
@@ -144,7 +150,10 @@ root, which is loaded automatically and git-ignored).
 | `PAYPAL_PLAN_ID` | *(empty)*    | PayPal billing plan id used for subscriptions. |
 | `PAYPAL_WEBHOOK_ID` | *(empty)*  | PayPal webhook signature id (for webhook verification). |
 | `PAYPAL_BASE_URL` | *(empty)*    | Public base URL PayPal redirects buyers to after approval (e.g. `https://app.example.com`); falls back to `http://localhost:PORT`. |
+| `PAYPAL_PRICE` | `9.99` | Price shown on the checkout page (informational only; the authoritative amount lives in the PayPal plan). |
 | `ADMIN_EMAILS` | *(empty)* | Comma-separated emails allowed to call the internal `/api/admin/*` endpoints (job review, queue, overview counters). Empty = no admin access. |
+| `RATE_LIMIT_GENERATE_PER_MIN` | `10` | Per-IP rate limit for `/api/generate/*`. |
+| `CORS_ORIGIN` | *(empty)* | Allowed browser origin for cross-domain clients. Empty = same-origin only (locked down). |
 | `BACKUP_DIR`   | `./data/backups` | Where SQLite online backups are written. |
 | `BACKUP_KEEP`  | `5`           | Number of backups to keep (older ones are pruned). |
 | `BACKUP_INTERVAL_MS` | `86400000` | Backup interval (ms). A backup also runs at boot. |
@@ -231,35 +240,56 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 `/api/health` also reports `db.ok` (SQLite round-trip), `disk` (free/total bytes
 and free percent), and `ffmpegAvailable`.
 
+## Testing
+
+```sh
+npm run smoke
+```
+
+Boots the app on a temp DB/port and runs 70+ end-to-end checks: auth, quota,
+billing webhooks, generation and file downloads. Requires `ffmpeg` and
+`edge-tts` (`pip install edge-tts`). The same suite runs in CI on every PR
+and push to `saas`/`main`.
+
 ## Project structure
 
 ```
 .
+├── .github/workflows/ci.yml   # CI: syntax checks + smoke suite on every PR
 ├── app/
 │   ├── server.js            # Express API + pipeline orchestration
-│   ├── config.js            # Env/config loading (.env)
+│   ├── config.js            # Env/config loading (.env) + startup validation
 │   ├── captions.js          # Caption engine: segmentation, 2 ASS styles, .srt
 │   ├── tts_word_timings.py  # edge-tts audio + word-boundary timing extraction
 │   ├── align_words.py       # whisper-based alignment fallback
 │   ├── db/                  # SQLite connection, migrations, repositories
-│   ├── routes/              # auth.js + API routes
-│   ├── services/            # auth.js (scrypt hashing)
-│   └── middleware/          # auth.js (requireAuth)
+│   ├── routes/              # auth.js + billing.js API routes
+│   ├── services/            # auth.js (scrypt), paypal.js, backup.js
+│   ├── middleware/          # auth.js (requireAuth), admin.js, rate-limit.js
+│   └── lib/                 # logger.js, http-error.js, validate.js
 ├── public/                  # Web UI
 │   ├── index.html           # Single-page Arabic captions UI (tool)
 │   ├── auth.html            # Arabic RTL login/register page
+│   ├── projects.html        # Project dashboard
+│   ├── 404.html / 500.html  # Arabic error pages
 │   └── js/
 │       ├── app.js           # Shared helpers: fetch, auth bar, job polling
 │       ├── auth.js          # Auth page logic
+│       ├── projects.js      # Dashboard logic
 │       └── tools/subtitles.js  # Captions tool
 ├── data/
 │   ├── app.db               # SQLite (users/sessions) — git-ignored
 │   ├── output/              # Rendered MP4s + .srt/.ass (git-ignored)
 │   └── work/                # Per-job scratch space (git-ignored)
+├── docs/                    # Phase-by-phase design notes
+├── scripts/                 # smoke-auth.js (tests), setup-paypal.js
 ├── Dockerfile
 ├── docker-compose.yml
 └── package.json
 ```
+
+See also [API.md](API.md) (full endpoint reference), [CONTRIBUTING.md](CONTRIBUTING.md),
+and [CHANGELOG.md](CHANGELOG.md).
 
 ## Troubleshooting
 
