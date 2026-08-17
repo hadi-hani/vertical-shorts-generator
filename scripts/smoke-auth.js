@@ -94,6 +94,12 @@ async function main() {
       FREE_MONTHLY_VIDEO_LIMIT: '2',
       ADMIN_EMAILS: 'smoke@example.com',
       BACKUP_DIR: path.join(tmp, 'backups'),
+      PAYPAL_MODE: 'mock',
+      PAYPAL_CLIENT_ID: 'mock-client',
+      PAYPAL_CLIENT_SECRET: 'mock-secret',
+      PAYPAL_PLAN_ID: 'mock-plan-id',
+      PAYPAL_WEBHOOK_ID: 'mock-webhook',
+      PAYPAL_BASE_URL: `http://127.0.0.1:${PORT}`,
     },
     stdio: ['ignore', 'ignore', 'inherit'],
   });
@@ -253,6 +259,64 @@ async function main() {
     check('quota message is Arabic', Boolean(over.data && over.data.message && /حصتك/.test(over.data.message)));
     const uB2 = await request('GET', '/api/usage', { cookie: jarB });
     check('user B usage independent (0/2)', uB2.data && uB2.data.usage && uB2.data.usage.consumed === 0 && uB2.data.usage.remaining === 2);
+
+    check('billing checkout requires auth', (await request('POST', '/api/billing/checkout')).status === 401);
+    const checkout = await request('POST', '/api/billing/checkout', { cookie: authedJar });
+    check('checkout returns approval URL', checkout.status === 200 && Boolean(checkout.data && checkout.data.approvalUrl));
+
+    const activate = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-activate-1',
+        event_type: 'BILLING.SUBSCRIPTION.ACTIVATED',
+        resource: { id: 'sub-test-1', custom_id: userIdA },
+      },
+    });
+    check('webhook ACTIVATED accepted', activate.status === 200 && activate.data && activate.data.ok === true);
+
+    const uAfter = await request('GET', '/api/usage', { cookie: authedJar });
+    check(
+      'premium plan applied after activation',
+      uAfter.data && uAfter.data.usage && uAfter.data.usage.plan === 'premium' && uAfter.data.usage.limit === 200 && uAfter.data.usage.remaining === 198
+    );
+
+    const adminBilling = await request('GET', '/api/admin/overview', { cookie: authedJar });
+    check('admin overview counts premium users', adminBilling.data && adminBilling.data.billing && adminBilling.data.billing.premiumUsers === 1);
+
+    const dupCheckout = await request('POST', '/api/billing/checkout', { cookie: authedJar });
+    check('checkout blocked while already premium (409)', dupCheckout.status === 409);
+
+    const thirdJob = await request('POST', '/api/generate/subtitles', {
+      cookie: authedJar,
+      body: { script: SCRIPT, language: 'ar', captionStyle: 'word', timingMode: 'auto' },
+    });
+    const thirdJobId = thirdJob.data && thirdJob.data.job && thirdJob.data.job.id;
+    check('premium user can generate beyond free quota', thirdJob.status === 202 && Boolean(thirdJobId));
+    check('premium job completed', (await pollJob(thirdJobId, authedJar, 180000)) === 'completed');
+
+    const dupWebhook = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-activate-1',
+        event_type: 'BILLING.SUBSCRIPTION.ACTIVATED',
+        resource: { id: 'sub-test-1', custom_id: userIdA },
+      },
+    });
+    check('duplicate webhook is idempotent', dupWebhook.status === 200 && dupWebhook.data && dupWebhook.data.duplicate === true);
+
+    const cancelled = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-cancel-1',
+        event_type: 'BILLING.SUBSCRIPTION.CANCELLED',
+        resource: { id: 'sub-test-1', custom_id: userIdA },
+      },
+    });
+    check('webhook CANCELLED accepted', cancelled.status === 200);
+    const uAfterCancel = await request('GET', '/api/usage', { cookie: authedJar });
+    check(
+      'plan back to free after cancel',
+      uAfterCancel.data && uAfterCancel.data.usage && uAfterCancel.data.usage.plan === 'free' && uAfterCancel.data.usage.limit === 2
+    );
+    const cancelNoSub = await request('POST', '/api/billing/cancel', { cookie: authedJar });
+    check('cancel with no active subscription rejected (400)', cancelNoSub.status === 400);
 
     console.log('----------------------------------------');
     console.log(`${checks - failures}/${checks} checks passed`);

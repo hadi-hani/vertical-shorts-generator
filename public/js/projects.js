@@ -129,12 +129,18 @@ window.Projects = {
       month: 'long',
       day: 'numeric',
     });
+    const isPremium = u.plan === 'premium';
 
     const info = document.createElement('div');
     info.className = 'q-info';
     const consumed = document.createElement('div');
-    consumed.innerHTML =
-      'الحصة المجانية: <b>' + u.consumed + ' / ' + u.limit + '</b> فيديو شهرياً · المتبقي <b>' + u.remaining + '</b>';
+    if (isPremium) {
+      consumed.innerHTML =
+        'الخطة المدفوعة: <b>' + u.consumed + ' / ' + u.limit + '</b> فيديو شهرياً · المتبقي <b>' + u.remaining + '</b>';
+    } else {
+      consumed.innerHTML =
+        'الخطة المجانية: <b>' + u.consumed + ' / ' + u.limit + '</b> فيديو شهرياً · المتبقي <b>' + u.remaining + '</b>';
+    }
     const resetsEl = document.createElement('div');
     resetsEl.className = 'q-resets';
     resetsEl.textContent = 'يتجدد رصيدك في: ' + resets;
@@ -148,7 +154,52 @@ window.Projects = {
     fill.style.width = pct + '%';
     bar.appendChild(fill);
     barWrap.appendChild(bar);
-    card.append(info, barWrap);
+
+    const actions = document.createElement('div');
+    actions.className = 'q-actions';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (isPremium) {
+      btn.textContent = 'إلغاء الاشتراك';
+      btn.className = 'cancel';
+      btn.addEventListener('click', () => this.cancelSubscription(btn));
+    } else {
+      btn.textContent = 'ترقية إلى المدفوعة';
+      btn.className = 'upgrade';
+      btn.addEventListener('click', () => this.upgrade(btn));
+    }
+    actions.appendChild(btn);
+
+    card.append(info, barWrap, actions);
+  },
+
+  async upgrade(btn) {
+    btn.disabled = true;
+    btn.textContent = 'جاري تجهيز الدفع…';
+    try {
+      const res = await App.fetchJson('/api/billing/checkout', { method: 'POST' });
+      if (res.approvalUrl) {
+        window.location.href = res.approvalUrl;
+        return;
+      }
+      throw new Error('لم يصل رابط الدفع');
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'ترقية إلى المدفوعة';
+      alert(err.message || 'تعذّر بدء الدفع');
+    }
+  },
+
+  async cancelSubscription(btn) {
+    if (!window.confirm('هل تريد إلغاء اشتراكك المدفوع والعودة للخطة المجانية؟')) return;
+    btn.disabled = true;
+    try {
+      await App.fetchJson('/api/billing/cancel', { method: 'POST' });
+      await this.load();
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message || 'تعذّر إلغاء الاشتراك');
+    }
   },
 
   async load() {

@@ -51,6 +51,12 @@ sync with the speech. The web UI is a single tool:
   default 10 videos) is checked before a job is queued; over-quota submissions
   get a clear Arabic `429 quota_exceeded` message. The dashboard shows how much
   is consumed, what remains, and when it resets (`GET /api/usage`).
+- **Paid plan (PayPal subscriptions)** — a premium tier with a higher monthly
+  quota (`PREMIUM_MONTHLY_VIDEO_LIMIT`). Users upgrade from the dashboard;
+  PayPal **webhooks** are the source of truth for activation, renewal,
+  cancellation and refunds (signature-verified, idempotent), and the plan is
+  reflected in `/api/usage` and the quota check. Works in `sandbox`/`live`
+  against PayPal, or `mock` mode for tests without an account.
 - **Admin observability** — structured JSON logs per job/user (no passwords or
   secrets), protected internal admin endpoints (`ADMIN_EMAILS`) to review
   failed jobs and the queue plus job/success/duration/storage counters, a
@@ -131,6 +137,13 @@ root, which is loaded automatically and git-ignored).
 | `OUTPUT_RETENTION_DAYS` | `7`           | Outputs (and orphan files) older than this many days are deleted by the hourly sweeper. |
 | `MAX_SCRIPT_CHARS` | `5000`                | Reject scripts longer than this. |
 | `FREE_MONTHLY_VIDEO_LIMIT` | `10`           | Free-plan monthly video quota. Submissions beyond it return `429 quota_exceeded` with an Arabic message until the period resets. |
+| `PREMIUM_MONTHLY_VIDEO_LIMIT` | `200`      | Premium-plan monthly video quota. |
+| `PAYPAL_MODE` | `sandbox`           | `sandbox` \| `live` \| `mock` (mock skips PayPal for tests). |
+| `PAYPAL_CLIENT_ID` | *(empty)*   | PayPal REST app client id (sandbox/live). |
+| `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal REST app secret (sandbox/live). |
+| `PAYPAL_PLAN_ID` | *(empty)*    | PayPal billing plan id used for subscriptions. |
+| `PAYPAL_WEBHOOK_ID` | *(empty)*  | PayPal webhook signature id (for webhook verification). |
+| `PAYPAL_BASE_URL` | *(empty)*    | Public base URL PayPal redirects buyers to after approval (e.g. `https://app.example.com`); falls back to `http://localhost:PORT`. |
 | `ADMIN_EMAILS` | *(empty)* | Comma-separated emails allowed to call the internal `/api/admin/*` endpoints (job review, queue, overview counters). Empty = no admin access. |
 | `BACKUP_DIR`   | `./data/backups` | Where SQLite online backups are written. |
 | `BACKUP_KEEP`  | `5`           | Number of backups to keep (older ones are pruned). |
@@ -210,6 +223,10 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
 | `/api/admin/overview` | GET    | Internal: job counters (total/by-status/completed, total & avg processing ms) + storage bytes. Requires a session whose email is in `ADMIN_EMAILS`. |
 | `/api/admin/jobs`     | GET    | Internal: review jobs across all users, filterable by `status`, `limit`, `offset`. Same admin requirement. |
+| `/api/billing/checkout` | POST | Start a PayPal subscription for the signed-in user; returns `{ subscriptionId, approvalUrl }` to redirect to. `409` when already premium, `503` when not configured. |
+| `/api/billing/cancel` | POST   | Cancel the user's active subscription and return to the free plan. |
+| `/api/billing/webhook` | POST  | PayPal webhook receiver (signature-verified, idempotent) — activation/renewal/cancel/refund events update the user's plan. |
+| `/api/billing/success` \| `/api/billing/cancel` | GET | Arabic confirmation pages PayPal redirects buyers to. |
 
 `/api/health` also reports `db.ok` (SQLite round-trip), `disk` (free/total bytes
 and free percent), and `ffmpegAvailable`.

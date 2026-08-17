@@ -115,6 +115,25 @@
     .quota .bar > div { height: 100%; background: linear-gradient(90deg, #62c8ff, #7e6bff); transition: width 0.4s; }
     .quota .bar.warn > div { background: #f0c26a; }
     .quota .bar.danger > div { background: #ff7d7d; }
+    .quota .q-actions { flex: 0 0 auto; }
+    .quota button {
+      border-radius: 10px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .quota button.upgrade {
+      background: linear-gradient(90deg, #62c8ff, #7e6bff);
+      border: none;
+      color: #0d0f1a;
+    }
+    .quota button.upgrade:disabled { opacity: 0.6; cursor: not-allowed; }
+    .quota button.cancel {
+      background: #0f1220;
+      border: 1px solid #4a2626;
+      color: #ff7d7d;
+    }
   </style>
 </head>
 <body>
