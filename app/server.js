@@ -16,7 +16,7 @@ const session = require('express-session');
 const SqliteSessionStore = require('./db/session-store');
 const authRoutes = require('./routes/auth');
 const { requireAuth } = require('./middleware/auth');
-const { initDb } = require('./db');
+const { initDb, getDb } = require('./db');
 const projectsRepo = require('./db/repositories/projects');
 
 const {
@@ -27,6 +27,7 @@ const {
   HOST,
   GEMINI_API_KEY,
   GEMINI_MODEL,
+  JOB_TIMEOUT_MS,
 } = config;
 
 let FFMPEG_BIN = 'ffmpeg';
@@ -73,11 +74,11 @@ app.use(
 app.use('/api/auth', authRoutes);
 
 /* ------------------------------------------------------------------ */
-/* Job store + tiny sequential queue                                    */
+/* Job persistence + tiny sequential queue (reads/writes SQLite)        */
 /* ------------------------------------------------------------------ */
 
-const jobs = new Map();
 let jobQueue = Promise.resolve();
+let activeChild = null;
 
 function createJob({
   userId,
@@ -88,45 +89,19 @@ function createJob({
   timingMode = TIMING_MODES.auto,
   wordsPerSegment = DEFAULT_WORDS_PER_SEGMENT,
 }) {
-  const id = crypto.randomUUID();
-  const job = {
-    id,
+  return projectsRepo.create({
+    id: crypto.randomUUID(),
     userId,
-    status: 'queued',
     idea: idea || null,
     script: script || null,
     language,
     captionStyle,
     timingMode,
     wordsPerSegment,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    outputFile: null,
-    outputUrl: null,
-    subtitleSrtUrl: null,
-    subtitleAssUrl: null,
-    error: null,
-    errorCode: null,
-    estimatedDuration: null,
-    meta: {},
-  };
-  jobs.set(id, job);
-  projectsRepo.create({
-    id,
-    userId,
-    idea: job.idea,
-    script: job.script,
-    language,
-    captionStyle,
-    timingMode,
-    wordsPerSegment,
   });
-  return job;
 }
 
 function updateJob(id, patch) {
-  const job = jobs.get(id);
-  if (job) Object.assign(job, patch, { updatedAt: new Date().toISOString() });
   const dbPatch = {
     ...(patch.status !== undefined && { status: patch.status }),
     ...(patch.script !== undefined && { script: patch.script }),
@@ -140,35 +115,7 @@ function updateJob(id, patch) {
     ...(patch.meta !== undefined && { meta: patch.meta }),
   };
   if (Object.keys(dbPatch).length) projectsRepo.update(id, dbPatch);
-  return job;
-}
-
-function listJobs() {
-  return Array.from(jobs.values()).sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-  );
-}
-
-function publicJob(job) {
-  return {
-    id: job.id,
-    status: job.status,
-    idea: job.idea,
-    script: job.script,
-    language: job.language,
-    captionStyle: job.captionStyle,
-    timingMode: job.timingMode,
-    wordsPerSegment: job.wordsPerSegment,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-    outputUrl: job.outputUrl,
-    subtitleSrtUrl: job.subtitleSrtUrl,
-    subtitleAssUrl: job.subtitleAssUrl,
-    error: job.error,
-    errorCode: job.errorCode,
-    estimatedDuration: job.estimatedDuration,
-    meta: job.meta,
-  };
+  return projectsRepo.findById(id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -181,12 +128,31 @@ function runProcess(cmd, args, opts = {}) {
       stdio: ['ignore', 'pipe', 'pipe'],
       ...opts,
     });
+    activeChild = child;
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d.toString()));
     child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('error', (err) => reject(err));
+    const clearChild = () => {
+      if (activeChild === child) activeChild = null;
+    };
+    const timer = opts.timeoutMs
+      ? setTimeout(() => {
+          clearChild();
+          child.kill('SIGKILL');
+          const e = new Error(`${cmd} timed out after ${opts.timeoutMs}ms`);
+          e.code = 'process_timeout';
+          reject(e);
+        }, opts.timeoutMs)
+      : null;
+    child.on('error', (err) => {
+      clearChild();
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
     child.on('close', (code) => {
+      clearChild();
+      if (timer) clearTimeout(timer);
       if (code === 0) resolve({ stdout, stderr, code });
       else reject(new Error(`${cmd} exited with code ${code}: ${stderr}`));
     });
@@ -325,7 +291,7 @@ async function runTts(script, language, workDir) {
         '--audio', audioPath,
         '--timings', edgeTimingsPath,
       ],
-      { timeout: 120000 }
+      { timeoutMs: 120000 }
     );
     let timings = JSON.parse(await fsp.readFile(edgeTimingsPath, 'utf-8'));
     if (!Array.isArray(timings) || timings.length === 0) {
@@ -344,7 +310,7 @@ async function runTts(script, language, workDir) {
           '--timings', timingsPath,
           '--language', language,
         ],
-        { timeout: 300000 }
+        { timeoutMs: 300000 }
       );
       source = 'whisper';
     } catch (fallbackErr) {
@@ -402,7 +368,7 @@ async function renderVideo({ audioPath, assPath, outputPath, duration }) {
   ];
 
   console.log(`[render] total=${total} bg=solid`);
-  await runProcess(FFMPEG_BIN, args, { timeout: 300000 });
+  await runProcess(FFMPEG_BIN, args, { timeoutMs: 300000 });
   return outputPath;
 }
 
@@ -410,16 +376,30 @@ async function renderVideo({ audioPath, assPath, outputPath, duration }) {
 /* Job processing                                                       */
 /* ------------------------------------------------------------------ */
 
-async function processJob(job) {
-  updateJob(job.id, { status: 'processing' });
-  const workDir = path.join(WORK_DIR, job.id);
+async function processJobById(jobId) {
+  const row = projectsRepo.findById(jobId);
+  if (!row) return;
+  if (row.status !== 'queued') return;
+  await processJob(row);
+}
+
+async function processJob(row) {
+  const jobId = row.id;
+  const workDir = path.join(WORK_DIR, jobId);
   await fsp.mkdir(workDir, { recursive: true });
+  updateJob(jobId, { status: 'processing', meta: { stage: 'start' } });
   console.log(
-    `[job ${job.id}] start captions=${job.captionStyle} timing=${job.timingMode} wps=${job.wordsPerSegment}`
+    `[job ${jobId}] start captions=${row.caption_style} timing=${row.timing_mode} wps=${row.words_per_segment}`
   );
 
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    if (activeChild) activeChild.kill('SIGKILL');
+  }, JOB_TIMEOUT_MS);
+
   try {
-    let script = job.script;
+    let script = row.script;
     if (!script) {
       if (!GEMINI_API_KEY) {
         const e = new Error(
@@ -428,8 +408,8 @@ async function processJob(job) {
         e.code = 'gemini_not_configured';
         throw e;
       }
-      script = await generateScript(job.idea);
-      updateJob(job.id, { script });
+      script = await generateScript(row.idea);
+      updateJob(jobId, { script });
     }
 
     const cleanScript = script.replace(/\s+/g, ' ').trim();
@@ -439,8 +419,8 @@ async function processJob(job) {
       throw e;
     }
 
-    const estimated = estimateDuration(cleanScript, job.language);
-    updateJob(job.id, { estimatedDuration: Math.round(estimated * 10) / 10 });
+    const estimated = estimateDuration(cleanScript, row.language);
+    updateJob(jobId, { estimatedDuration: Math.round(estimated * 10) / 10 });
     if (estimated > MAX_SCRIPT_SECONDS) {
       const e = new Error(
         `Estimated script duration (${estimated.toFixed(1)}s) exceeds the ${MAX_SCRIPT_SECONDS}s limit`
@@ -449,9 +429,10 @@ async function processJob(job) {
       throw e;
     }
 
+    updateJob(jobId, { meta: { stage: 'tts' } });
     const { audioPath, timings, duration, source } = await runTts(
       cleanScript,
-      job.language,
+      row.language,
       workDir
     );
 
@@ -463,73 +444,93 @@ async function processJob(job) {
       throw e;
     }
 
-    const captionStyle = CAPTION_STYLES[job.captionStyle] || CAPTION_STYLES.word;
+    const captionStyle = CAPTION_STYLES[row.caption_style] || CAPTION_STYLES.word;
     const segments = segmentCaptions(timings, cleanScript, {
-      timingMode: job.timingMode,
-      wordsPerSegment: job.wordsPerSegment,
+      timingMode: row.timing_mode,
+      wordsPerSegment: row.words_per_segment,
       duration,
     });
-    const assContent = buildAss(segments, job.language, {
+    updateJob(jobId, { meta: { stage: 'captions' } });
+    const assContent = buildAss(segments, row.language, {
       style: captionStyle,
       y: CAPTION_Y.center,
-      font: FONTS[job.language] || FONTS.ar,
+      font: FONTS[row.language] || FONTS.ar,
     });
     const assPath = path.join(workDir, 'subs.ass');
     await fsp.writeFile(assPath, assContent, 'utf-8');
 
-    const outputFile = `${job.id}.mp4`;
+    const outputFile = `${jobId}.mp4`;
     const outputPath = path.join(OUTPUT_DIR, outputFile);
+    updateJob(jobId, { meta: { stage: 'render' } });
     await renderVideo({ audioPath, assPath, outputPath, duration });
 
     // Downloadable subtitle files (style-independent .srt + styled .ass).
-    await fsp.copyFile(assPath, path.join(OUTPUT_DIR, `${job.id}.ass`));
+    await fsp.copyFile(assPath, path.join(OUTPUT_DIR, `${jobId}.ass`));
     await fsp.writeFile(
-      path.join(OUTPUT_DIR, `${job.id}.srt`),
+      path.join(OUTPUT_DIR, `${jobId}.srt`),
       buildSrt(segments),
       'utf-8'
     );
 
-    updateJob(job.id, {
+    updateJob(jobId, {
       status: 'completed',
       completedAt: new Date().toISOString(),
-      outputFile,
       outputUrl: `/api/outputs/${outputFile}`,
-      subtitleSrtUrl: `/api/outputs/${job.id}.srt`,
-      subtitleAssUrl: `/api/outputs/${job.id}.ass`,
+      subtitleSrtUrl: `/api/outputs/${jobId}.srt`,
+      subtitleAssUrl: `/api/outputs/${jobId}.ass`,
       meta: {
+        stage: 'done',
         style: STYLE_SUBTITLES,
         captionStyle,
-        timingMode: job.timingMode,
-        wordsPerSegment: job.wordsPerSegment,
+        timingMode: row.timing_mode,
+        wordsPerSegment: row.words_per_segment,
         ttsSource: source,
         wordCount: timings.length,
         audioDuration: Math.round(duration * 100) / 100,
       },
     });
   } catch (err) {
-    const code = err.code || 'render_failed';
-    console.error(`[job ${job.id}] failed (${code}): ${err.message}`);
-    updateJob(job.id, {
+    const code = timedOut ? 'job_timeout' : err.code || 'render_failed';
+    const message = timedOut
+      ? `Job exceeded the ${Math.round(JOB_TIMEOUT_MS / 1000)}s time limit`
+      : err.message;
+    console.error(`[job ${jobId}] failed (${code}): ${err.message}`);
+    updateJob(jobId, {
       status: 'failed',
-      error: err.message,
+      error: message,
       errorCode: code,
     });
   } finally {
+    clearTimeout(timer);
     await fsp.rm(workDir, { recursive: true, force: true });
   }
 }
 
-function enqueue(job) {
+function enqueue(jobId) {
   jobQueue = jobQueue
-    .then(() => processJob(job))
+    .then(() => processJobById(jobId))
     .catch((err) => {
-      updateJob(job.id, {
+      updateJob(jobId, {
         status: 'failed',
         error: err.message,
         errorCode: err.code || 'internal_error',
       });
     });
-  return job;
+  return jobId;
+}
+
+function recoverStaleJobs() {
+  const rows = getDb()
+    .prepare("SELECT id, status FROM projects WHERE status IN ('queued', 'processing')")
+    .all();
+  for (const r of rows) {
+    updateJob(r.id, {
+      status: 'interrupted',
+      error: 'Server restarted while this job was in progress',
+      errorCode: 'interrupted',
+    });
+    console.log(`[jobs] marked ${r.id} as interrupted (stale on boot)`);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -537,14 +538,12 @@ function enqueue(job) {
 /* ------------------------------------------------------------------ */
 
 app.get('/api/health', (req, res) => {
+  const counts = projectsRepo.statusCounts();
   res.json({
     ok: true,
     app: 'shorts-video-mvp',
-    jobCount: jobs.size,
-    jobs: listJobs().reduce((acc, j) => {
-      acc[j.status] = (acc[j.status] || 0) + 1;
-      return acc;
-    }, {}),
+    jobCount: Object.values(counts).reduce((a, b) => a + b, 0),
+    jobs: counts,
     geminiConfigured: Boolean(GEMINI_API_KEY),
     ffmpegAvailable: isToolAvailable('ffmpeg'),
   });
@@ -598,7 +597,7 @@ app.post('/api/generate/subtitles', requireAuth, (req, res) => {
   const wordsPerSegment = Number.isFinite(wpsRaw)
     ? Math.max(1, Math.min(10, wpsRaw))
     : DEFAULT_WORDS_PER_SEGMENT;
-  const job = createJob({
+  const row = createJob({
     userId: req.user.id,
     idea: v.idea,
     script: v.script,
@@ -607,8 +606,8 @@ app.post('/api/generate/subtitles', requireAuth, (req, res) => {
     timingMode,
     wordsPerSegment,
   });
-  enqueue(job);
-  res.status(202).json({ job: publicJob(job) });
+  enqueue(row.id);
+  res.status(202).json({ job: projectsRepo.toPublicProject(row) });
 });
 
 app.post('/api/generate-script', requireAuth, async (req, res) => {
@@ -667,6 +666,8 @@ async function boot() {
   await fsp.mkdir(WORK_DIR, { recursive: true });
 
   initDb();
+
+  recoverStaleJobs();
 
   if (!isToolAvailable(FFMPEG_BIN)) {
     console.warn('[boot] WARNING: ffmpeg not found — rendering will fail');

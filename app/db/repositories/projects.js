@@ -54,7 +54,9 @@ function update(id, patch) {
   if (keys.length) {
     const values = keys.map((k) => {
       if (k === 'meta' && patch[k] && typeof patch[k] === 'object') {
-        return JSON.stringify(patch[k]);
+        const row = getDb().prepare('SELECT meta FROM projects WHERE id = ?').get(id);
+        const prev = parseMeta(row && row.meta);
+        return JSON.stringify({ ...prev, ...patch[k] });
       }
       return patch[k] === undefined ? null : patch[k];
     });
@@ -73,6 +75,15 @@ function parseMeta(raw) {
   } catch (_) {
     return {};
   }
+}
+
+function statusCounts() {
+  const rows = getDb()
+    .prepare('SELECT status, COUNT(*) AS c FROM projects GROUP BY status')
+    .all();
+  const counts = {};
+  for (const r of rows) counts[r.status] = r.c;
+  return counts;
 }
 
 function toPublicProject(row) {
@@ -98,4 +109,4 @@ function toPublicProject(row) {
   };
 }
 
-module.exports = { create, findById, listByUser, update, toPublicProject };
+module.exports = { create, findById, listByUser, update, toPublicProject, parseMeta, statusCounts };

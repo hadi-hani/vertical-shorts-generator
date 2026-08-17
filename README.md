@@ -36,6 +36,10 @@ sync with the speech. The web UI is a single tool:
 - **User accounts** — register/login with session cookies (SQLite-backed) and a
   simple Arabic RTL auth page. Generation, job listing and file downloads
   require an authenticated session.
+- **Persistent jobs** — projects live in SQLite, so completed videos and their
+  outputs survive server restarts; any job interrupted by a restart is marked
+  `interrupted`, and each job has an overall time limit that kills a hung
+  TTS/ffmpeg step (`JOB_TIMEOUT_MS`).
 
 ## How it works
 
@@ -107,6 +111,7 @@ root, which is loaded automatically and git-ignored).
 | `DB_PATH`        | `./data/app.db`         | SQLite database file.                                   |
 | `COOKIE_SECURE`  | `0`                     | Set to `1` when serving over HTTPS.                     |
 | `TRUST_PROXY`    | `0`                     | Set to the number of reverse-proxy hops (e.g. `1`) behind Nginx/Cloudflare. |
+| `JOB_TIMEOUT_MS` | `600000`                | Overall per-job time limit (ms); a job that exceeds it is killed and marked `failed` with `errorCode=job_timeout`. |
 
 The Arabic voice and font are defined in `app/server.js`:
 
@@ -144,7 +149,9 @@ curl -X POST http://localhost:8283/api/generate/subtitles \
 
 ### `GET /api/jobs/:id`
 
-Poll for completion.
+Poll for completion. Job statuses: `queued`, `processing`, `completed`,
+`failed`, or `interrupted` (left over from a server restart). A failed job
+includes `error` and `errorCode` (e.g. `job_timeout`, `tts_word_timings_missing`).
 
 ```sh
 curl http://localhost:8283/api/jobs/34d29fa4-...
