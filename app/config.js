@@ -93,6 +93,8 @@ module.exports = {
     .filter(Boolean),
   RATE_LIMIT_GENERATE_PER_MIN: parseInt(process.env.RATE_LIMIT_GENERATE_PER_MIN || '10', 10),
   CORS_ORIGIN: process.env.CORS_ORIGIN || '',
+  SENTRY_DSN: process.env.SENTRY_DSN || '',
+  LOG_DIR: process.env.LOG_DIR || '',
   BACKUP_DIR: process.env.BACKUP_DIR || path.join(ROOT_DIR, 'data', 'backups'),
   BACKUP_KEEP: parseInt(process.env.BACKUP_KEEP || '5', 10),
   BACKUP_INTERVAL_MS: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
