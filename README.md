@@ -40,6 +40,9 @@ sync with the speech. The web UI is a single tool:
   outputs survive server restarts; any job interrupted by a restart is marked
   `interrupted`, and each job has an overall time limit that kills a hung
   TTS/ffmpeg step (`JOB_TIMEOUT_MS`).
+- **Project dashboard** — a `/projects` page lists your projects (idea/script
+  snippet, status badge, MP4/SRT/ASS downloads, delete) with an Arabic empty
+  state; only your own projects are visible.
 
 ## How it works
 
@@ -182,6 +185,7 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 | `/api/auth/logout`    | POST   | End the session.                             |
 | `/api/auth/me`        | GET    | Current user (401 when logged out).          |
 | `/api/jobs`           | GET    | List the current user's projects (auth required). |
+| `/api/jobs/:id`       | DELETE | Delete a project the current user owns (auth required). |
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
 
 ## Project structure

@@ -472,6 +472,17 @@ async function processJob(row) {
       'utf-8'
     );
 
+    // The user may have deleted this project while it was rendering — if so,
+    // discard the produced files instead of re-adding a completed project.
+    const current = projectsRepo.findById(jobId);
+    if (!current || current.status !== 'processing') {
+      for (const ext of ['mp4', 'srt', 'ass']) {
+        await fsp.unlink(path.join(OUTPUT_DIR, `${jobId}.${ext}`)).catch(() => {});
+      }
+      console.log(`[job ${jobId}] discarded outputs (project deleted mid-render)`);
+      return;
+    }
+
     updateJob(jobId, {
       status: 'completed',
       completedAt: new Date().toISOString(),
@@ -560,6 +571,21 @@ app.get('/api/jobs/:id', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'job_not_found' });
   }
   res.json({ job: projectsRepo.toPublicProject(row) });
+});
+
+app.delete('/api/jobs/:id', requireAuth, (req, res) => {
+  const row = projectsRepo.findById(req.params.id);
+  if (!row || row.user_id !== req.user.id) {
+    return res.status(404).json({ error: 'job_not_found' });
+  }
+  projectsRepo.remove(req.params.id);
+  for (const ext of ['mp4', 'srt', 'ass']) {
+    const file = path.join(OUTPUT_DIR, `${req.params.id}.${ext}`);
+    try {
+      fs.unlinkSync(file);
+    } catch (_) {}
+  }
+  res.json({ ok: true });
 });
 
 function validateGenerateBody(req, res) {
