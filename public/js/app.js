@@ -91,7 +91,7 @@ window.App = {
       window.location.href = '/auth.html';
     });
     const link = document.createElement('a');
-    link.href = '/projects.html';
+    link.href = '/projects';
     link.textContent = 'مشاريعي';
     bar.replaceChildren(email, link, logout);
   },

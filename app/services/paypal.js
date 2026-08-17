@@ -81,10 +81,6 @@ async function createSubscription({ userId, email, returnUrl, cancelUrl }) {
     body: JSON.stringify({
       plan_id: config.PAYPAL_PLAN_ID,
       custom_id: userId,
-      subscriber: {
-        name: { given_name: 'User', surname: '' },
-        email_address: email,
-      },
       application_context: {
         brand_name: 'Shorts Generator',
         locale: 'ar',
@@ -128,4 +124,4 @@ async function verifyWebhook(headers, body) {
   return verify.verification_status === 'SUCCESS';
 }
 
-module.exports = { apiBase, isConfigured, createSubscription, cancelSubscription, verifyWebhook };
+module.exports = { apiBase, api, isConfigured, createSubscription, cancelSubscription, verifyWebhook };

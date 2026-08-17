@@ -948,6 +948,9 @@ app.get('/api/outputs/:file', requireAuth, (req, res) => {
 /* Static UI */
 if (fs.existsSync(path.join(PUBLIC_DIR, 'index.html'))) {
   app.use(express.static(PUBLIC_DIR));
+  app.get('/projects', (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'projects.html'));
+  });
 } else {
   app.get('/', (req, res) => {
     res.type('text/plain').send('shorts-video-mvp API is running');

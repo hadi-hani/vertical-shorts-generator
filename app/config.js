@@ -57,6 +57,7 @@ module.exports = {
   PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET || '',
   PAYPAL_PLAN_ID: process.env.PAYPAL_PLAN_ID || '',
   PAYPAL_WEBHOOK_ID: process.env.PAYPAL_WEBHOOK_ID || '',
+  PAYPAL_PRICE: process.env.PAYPAL_PRICE || '9.99',
   PAYPAL_BASE_URL: process.env.PAYPAL_BASE_URL || '', // public base used for PayPal return URLs
   ADMIN_EMAILS: (process.env.ADMIN_EMAILS || '')
     .split(',')
