@@ -106,6 +106,15 @@
     .foot a { color: #62c8ff; text-decoration: none; font-weight: 600; }
     .hidden { display: none; }
     .error { color: #ff7d7d; font-size: 13px; text-align: center; margin-top: 20px; }
+    .quota { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+    .quota .q-info { font-size: 13px; color: #a7adc6; line-height: 1.8; }
+    .quota .q-info b { color: #e8eaf2; }
+    .quota .q-resets { font-size: 12px; color: #6f7490; }
+    .quota .q-bar { flex: 1; max-width: 260px; }
+    .quota .bar { height: 8px; background: #0f1220; border: 1px solid #2a2f4a; border-radius: 99px; overflow: hidden; margin-top: 6px; }
+    .quota .bar > div { height: 100%; background: linear-gradient(90deg, #62c8ff, #7e6bff); transition: width 0.4s; }
+    .quota .bar.warn > div { background: #f0c26a; }
+    .quota .bar.danger > div { background: #ff7d7d; }
   </style>
 </head>
 <body>
@@ -120,6 +129,8 @@
       <span class="spacer"></span>
       <nav class="authbar hidden" id="authBar"></nav>
     </div>
+
+    <div class="card quota hidden" id="quotaCard"></div>
 
     <main id="projects"></main>
     <p class="foot">

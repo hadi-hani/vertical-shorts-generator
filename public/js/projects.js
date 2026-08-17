@@ -118,10 +118,47 @@ window.Projects = {
     box.appendChild(empty);
   },
 
+  renderQuota(u) {
+    const card = this.el('quotaCard');
+    if (!card) return;
+    card.classList.remove('hidden');
+    card.replaceChildren();
+    const pct = u.limit ? Math.min(100, Math.round((u.consumed / u.limit) * 100)) : 0;
+    const resets = new Date(u.resetsAt).toLocaleDateString('ar', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    const info = document.createElement('div');
+    info.className = 'q-info';
+    const consumed = document.createElement('div');
+    consumed.innerHTML =
+      'الحصة المجانية: <b>' + u.consumed + ' / ' + u.limit + '</b> فيديو شهرياً · المتبقي <b>' + u.remaining + '</b>';
+    const resetsEl = document.createElement('div');
+    resetsEl.className = 'q-resets';
+    resetsEl.textContent = 'يتجدد رصيدك في: ' + resets;
+    info.append(consumed, resetsEl);
+
+    const barWrap = document.createElement('div');
+    barWrap.className = 'q-bar';
+    const bar = document.createElement('div');
+    bar.className = 'bar' + (u.remaining === 0 ? ' danger' : pct >= 80 ? ' warn' : '');
+    const fill = document.createElement('div');
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    barWrap.appendChild(bar);
+    card.append(info, barWrap);
+  },
+
   async load() {
     const box = this.el('projects');
     try {
-      const data = await App.fetchJson('/api/jobs');
+      const [data, usage] = await Promise.all([
+        App.fetchJson('/api/jobs'),
+        App.fetchJson('/api/usage').catch(() => null),
+      ]);
+      if (usage && usage.usage) this.renderQuota(usage.usage);
       const jobs = data.jobs || [];
       if (jobs.length === 0) {
         this.showEmpty();

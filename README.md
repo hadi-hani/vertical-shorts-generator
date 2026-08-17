@@ -47,6 +47,10 @@ sync with the speech. The web UI is a single tool:
   `data/output/<user_id>/`, temp work dirs are always wiped, and completed
   projects (plus orphaned files) older than `OUTPUT_RETENTION_DAYS` (default 7)
   are cleaned automatically. API errors are scrubbed of filesystem paths.
+- **Free-plan quota** — the monthly allowance (`FREE_MONTHLY_VIDEO_LIMIT`,
+  default 10 videos) is checked before a job is queued; over-quota submissions
+  get a clear Arabic `429 quota_exceeded` message. The dashboard shows how much
+  is consumed, what remains, and when it resets (`GET /api/usage`).
 
 ## How it works
 
@@ -121,6 +125,7 @@ root, which is loaded automatically and git-ignored).
 | `JOB_TIMEOUT_MS` | `600000`                | Overall per-job time limit (ms); a job that exceeds it is killed and marked `failed` with `errorCode=job_timeout`. |
 | `OUTPUT_RETENTION_DAYS` | `7`           | Outputs (and orphan files) older than this many days are deleted by the hourly sweeper. |
 | `MAX_SCRIPT_CHARS` | `5000`                | Reject scripts longer than this. |
+| `FREE_MONTHLY_VIDEO_LIMIT` | `10`           | Free-plan monthly video quota. Submissions beyond it return `429 quota_exceeded` with an Arabic message until the period resets. |
 
 The Arabic voice and font are defined in `app/server.js`:
 
@@ -192,6 +197,7 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 | `/api/auth/me`        | GET    | Current user (401 when logged out).          |
 | `/api/jobs`           | GET    | List the current user's projects (auth required). |
 | `/api/jobs/:id`       | DELETE | Delete a project the current user owns (auth required). |
+| `/api/usage`          | GET    | Current free-plan quota: consumed, remaining, reset date (auth required). |
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
 
 ## Project structure
