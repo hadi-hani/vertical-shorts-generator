@@ -5,6 +5,7 @@ const express = require('express');
 const usersRepo = require('../db/repositories/users');
 const authService = require('../services/auth');
 const { authLimiter } = require('../middleware/rate-limit');
+const { log } = require('../lib/logger');
 
 const router = express.Router();
 
@@ -42,6 +43,7 @@ router.post('/register', authLimiter, (req, res) => {
       return res.status(500).json({ error: 'session_error', message: 'تعذّر بدء الجلسة' });
     }
     req.session.userId = user.id;
+    log('info', 'user_registered', { userId: user.id, email });
     res.status(201).json({ user: authService.toPublicUser(user) });
   });
 });
@@ -52,6 +54,7 @@ router.post('/login', authLimiter, (req, res) => {
   const user = usersRepo.findByEmail(email);
 
   if (!user || !authService.verifyPassword(password, user.password_hash)) {
+    log('warn', 'login_failed', { email });
     return res
       .status(401)
       .json({ error: 'invalid_credentials', message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' });
@@ -62,11 +65,13 @@ router.post('/login', authLimiter, (req, res) => {
       return res.status(500).json({ error: 'session_error', message: 'تعذّر بدء الجلسة' });
     }
     req.session.userId = user.id;
+    log('info', 'user_login', { userId: user.id, email });
     res.json({ user: authService.toPublicUser(user) });
   });
 });
 
 router.post('/logout', (req, res) => {
+  log('info', 'user_logout', { userId: req.session && req.session.userId });
   req.session.destroy(() => {
     res.clearCookie('sid');
     res.json({ ok: true });

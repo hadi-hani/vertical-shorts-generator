@@ -92,6 +92,8 @@ async function main() {
       NODE_ENV: 'test',
       SESSIONS_SECRET: 'smoke-test-session-secret-0123456789abcdef',
       FREE_MONTHLY_VIDEO_LIMIT: '2',
+      ADMIN_EMAILS: 'smoke@example.com',
+      BACKUP_DIR: path.join(tmp, 'backups'),
     },
     stdio: ['ignore', 'ignore', 'inherit'],
   });
@@ -105,6 +107,10 @@ async function main() {
     console.log('PASS  server booted');
 
     check('health is open', (await request('GET', '/api/health')).status === 200);
+    const h = await request('GET', '/api/health');
+    check('health reports db ok', h.data && h.data.db && h.data.db.ok === true);
+    check('health reports ffmpeg', h.data && h.data.ffmpegAvailable === true);
+    check('health reports disk', h.data && h.data.disk && h.data.disk.freeBytes > 0);
     check('GET /api/jobs requires auth', (await request('GET', '/api/jobs')).status === 401);
     check('GET /api/outputs/* requires auth', (await request('GET', '/api/outputs/x.mp4')).status === 401);
     check('POST generate requires auth', (await request('POST', '/api/generate/subtitles', { body: { script: 'مرحبا' } })).status === 401);
@@ -193,6 +199,26 @@ async function main() {
     check("user B cannot read A's job (404)", (await request('GET', `/api/jobs/${firstJobId}`, { cookie: jarB })).status === 404);
     check("user B cannot download A's file (404)", (await request('GET', `/api/outputs/${firstJobId}.mp4`, { cookie: jarB })).status === 404);
     check('A can still read own job', (await request('GET', `/api/jobs/${firstJobId}`, { cookie: authedJar })).status === 200);
+
+    check('admin overview requires auth', (await request('GET', '/api/admin/overview')).status === 401);
+    check('non-admin user blocked (403)', (await request('GET', '/api/admin/overview', { cookie: jarB })).status === 403);
+    const ov = await request('GET', '/api/admin/overview', { cookie: authedJar });
+    check(
+      'admin overview reports stats',
+      ov.status === 200 && ov.data && ov.data.stats && ov.data.stats.completed === 2 && ov.data.stats.total === 2
+    );
+    check(
+      'admin overview reports duration',
+      Boolean(ov.data && ov.data.stats && ov.data.stats.avgProcessingMs > 0)
+    );
+    check(
+      'admin overview reports storage',
+      ov.data && ov.data.storage && ov.data.storage.outputBytes > 0 && ov.data.storage.dbBytes > 0
+    );
+    const allJobs = await request('GET', '/api/admin/jobs', { cookie: authedJar });
+    check('admin lists all jobs', allJobs.status === 200 && allJobs.data && allJobs.data.jobs.length === 2);
+    const failedJobs = await request('GET', '/api/admin/jobs?status=failed', { cookie: authedJar });
+    check('admin filters by status', failedJobs.status === 200 && failedJobs.data && failedJobs.data.jobs.length === 0);
 
     const delAnon = await request('DELETE', `/api/jobs/${firstJobId}`);
     check('DELETE requires auth', delAnon.status === 401);

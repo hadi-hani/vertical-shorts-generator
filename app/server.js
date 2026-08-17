@@ -19,6 +19,9 @@ const { requireAuth } = require('./middleware/auth');
 const { initDb, getDb } = require('./db');
 const projectsRepo = require('./db/repositories/projects');
 const usageRepo = require('./db/repositories/usage');
+const { log } = require('./lib/logger');
+const { requireAdmin } = require('./middleware/admin');
+const { backupDb } = require('./services/backup');
 
 const {
   PUBLIC_DIR,
@@ -32,6 +35,7 @@ const {
   OUTPUT_RETENTION_DAYS,
   MAX_SCRIPT_CHARS,
   FREE_MONTHLY_VIDEO_LIMIT,
+  DATA_DIR,
 } = config;
 
 let FFMPEG_BIN = 'ffmpeg';
@@ -389,12 +393,18 @@ async function processJobById(jobId) {
 
 async function processJob(row) {
   const jobId = row.id;
+  const userId = row.user_id;
+  const startedAt = Date.now();
   const workDir = path.join(WORK_DIR, jobId);
   await fsp.mkdir(workDir, { recursive: true });
   updateJob(jobId, { status: 'processing', meta: { stage: 'start' } });
-  console.log(
-    `[job ${jobId}] start captions=${row.caption_style} timing=${row.timing_mode} wps=${row.words_per_segment}`
-  );
+  log('info', 'job_start', {
+    jobId,
+    userId,
+    captionStyle: row.caption_style,
+    timingMode: row.timing_mode,
+    wordsPerSegment: row.words_per_segment,
+  });
 
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -485,7 +495,7 @@ async function processJob(row) {
       for (const ext of ['mp4', 'srt', 'ass']) {
         await fsp.unlink(path.join(userDir, `${jobId}.${ext}`)).catch(() => {});
       }
-      console.log(`[job ${jobId}] discarded outputs (project deleted mid-render)`);
+      log('info', 'job_discarded', { jobId, userId });
       return;
     }
 
@@ -504,15 +514,22 @@ async function processJob(row) {
         ttsSource: source,
         wordCount: timings.length,
         audioDuration: Math.round(duration * 100) / 100,
+        processingMs: Date.now() - startedAt,
       },
     });
     usageRepo.increment(row.user_id, { videos: 0, seconds: Math.round(duration) });
+    log('info', 'job_completed', {
+      jobId,
+      userId,
+      processingMs: Date.now() - startedAt,
+      audioDuration: Math.round(duration * 100) / 100,
+    });
   } catch (err) {
     const code = timedOut ? 'job_timeout' : err.code || 'render_failed';
     const message = timedOut
       ? `Job exceeded the ${Math.round(JOB_TIMEOUT_MS / 1000)}s time limit`
       : err.message;
-    console.error(`[job ${jobId}] failed (${code}): ${err.message}`);
+    log('error', 'job_failed', { jobId, userId, code, message });
     updateJob(jobId, {
       status: 'failed',
       error: message,
@@ -539,7 +556,7 @@ function enqueue(jobId) {
 
 function recoverStaleJobs() {
   const rows = getDb()
-    .prepare("SELECT id, status FROM projects WHERE status IN ('queued', 'processing')")
+    .prepare("SELECT id, user_id, status FROM projects WHERE status IN ('queued', 'processing')")
     .all();
   for (const r of rows) {
     updateJob(r.id, {
@@ -547,7 +564,7 @@ function recoverStaleJobs() {
       error: 'Server restarted while this job was in progress',
       errorCode: 'interrupted',
     });
-    console.log(`[jobs] marked ${r.id} as interrupted (stale on boot)`);
+    log('warn', 'job_interrupted', { jobId: r.id, userId: r.user_id });
   }
 }
 
@@ -690,10 +707,28 @@ function buildUsageView(userId) {
 /* ------------------------------------------------------------------ */
 
 app.get('/api/health', (req, res) => {
+  let dbOk = false;
+  try {
+    getDb().prepare('SELECT 1').get();
+    dbOk = true;
+  } catch (_) {}
+  let disk = null;
+  try {
+    const s = fs.statfsSync(DATA_DIR);
+    const free = s.bavail * s.bsize;
+    const total = s.blocks * s.bsize;
+    disk = {
+      freeBytes: free,
+      totalBytes: total,
+      freePercent: total ? Math.round((free / total) * 100) : 100,
+    };
+  } catch (_) {}
   const counts = projectsRepo.statusCounts();
   res.json({
-    ok: true,
+    ok: dbOk,
     app: 'shorts-video-mvp',
+    db: { ok: dbOk },
+    disk,
     jobCount: Object.values(counts).reduce((a, b) => a + b, 0),
     jobs: counts,
     geminiConfigured: Boolean(GEMINI_API_KEY),
@@ -708,6 +743,60 @@ app.get('/api/jobs', requireAuth, (req, res) => {
 
 app.get('/api/usage', requireAuth, (req, res) => {
   res.json({ usage: buildUsageView(req.user.id) });
+});
+
+/* --- Admin (internal, ADMIN_EMAILS only) --- */
+
+function measureStorage() {
+  let bytes = 0;
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch (_) {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e);
+      try {
+        const st = fs.statSync(full);
+        if (st.isDirectory()) walk(full);
+        else if (st.isFile()) bytes += st.size;
+      } catch (_) {}
+    }
+  };
+  walk(OUTPUT_DIR);
+  return bytes;
+}
+
+app.get('/api/admin/overview', requireAdmin, (req, res) => {
+  let dbBytes = 0;
+  try {
+    dbBytes = fs.statSync(config.DB_PATH).size;
+  } catch (_) {}
+  res.json({
+    stats: projectsRepo.stats(),
+    storage: {
+      outputBytes: measureStorage(),
+      dbBytes,
+    },
+    admin: req.user.email,
+  });
+});
+
+app.get('/api/admin/jobs', requireAdmin, (req, res) => {
+  const status = (req.query.status || '').trim();
+  const limit = Math.min(parseInt(req.query.limit || '50', 10) || 50, 200);
+  const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+  const rows = projectsRepo.listForAdmin({
+    status: status || undefined,
+    limit,
+    offset,
+  });
+  res.json({
+    jobs: rows.map(projectsRepo.toPublicProject),
+    count: rows.length,
+  });
 });
 
 app.get('/api/jobs/:id', requireAuth, (req, res) => {
@@ -877,6 +966,14 @@ async function boot() {
   }, 60 * 60 * 1000).unref();
 
   setInterval(runStorageSweep, 60 * 60 * 1000).unref();
+
+  const runBackup = () => {
+    backupDb()
+      .then((p) => log('info', 'backup_done', { file: path.basename(p) }))
+      .catch((err) => log('error', 'backup_failed', { message: err.message }));
+  };
+  runBackup();
+  setInterval(runBackup, config.BACKUP_INTERVAL_MS).unref();
 
   app.listen(PORT, HOST, () => {
     console.log(`[boot] shorts-video-mvp listening on http://${HOST}:${PORT}`);
