@@ -1,0 +1,119 @@
+/* Shared design system: dark (default) + light themes, toast, buttons,
+ * form validation states, loading indicators. Pages keep their own layout
+ * rules but reference these CSS variables. */
+
+:root {
+  --bg: #0d0f1a;
+  --surface: #171a2b;
+  --surface2: #0f1220;
+  --border: #262a40;
+  --border2: #2a2f4a;
+  --text: #e8eaf2;
+  --muted: #8b90a5;
+  --muted2: #a7adc6;
+  --muted3: #6f7490;
+  --accent: #62c8ff;
+  --accent2: #7e6bff;
+  --danger: #ff7d7d;
+  --success: #62e0a0;
+  --warn: #f0c26a;
+  --onaccent: #08131c;
+  --shadow: rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f3f5fb;
+  --surface: #ffffff;
+  --surface2: #eef1f8;
+  --border: #d9dde9;
+  --border2: #c6cbdb;
+  --text: #1c2133;
+  --muted: #6a7088;
+  --muted2: #464d66;
+  --muted3: #8b90a5;
+  --accent: #1a7fd6;
+  --accent2: #6a4fe0;
+  --danger: #d64545;
+  --success: #2f9e63;
+  --warn: #b8860b;
+  --onaccent: #ffffff;
+  --shadow: rgba(15, 23, 42, 0.12);
+  color-scheme: light;
+}
+
+/* Theme toggle button (fixed top corner; RTL pages place it visually left). */
+#themeToggle {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 50;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--border2);
+  background: var(--surface);
+  color: var(--muted2);
+  font-size: 17px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.15s, border-color 0.15s;
+}
+[dir="rtl"] #themeToggle { right: auto; left: 14px; }
+#themeToggle:hover { transform: translateY(-1px); border-color: var(--accent); }
+
+/* Toast notifications (used by ui.js as a lightweight error boundary). */
+#toastStack {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(92vw, 420px);
+}
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-right: 4px solid var(--accent);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  box-shadow: 0 6px 20px var(--shadow);
+  animation: toast-in 0.2s ease;
+}
+.toast.error { border-right-color: var(--danger); }
+.toast.success { border-right-color: var(--success); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Form validation states (wired by auth.js). */
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 5px;
+  min-height: 16px;
+  word-break: break-word;
+}
+input.invalid { border-color: var(--danger) !important; }
+
+/* Loading spinner for buttons. */
+.btn-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-inline-end: 6px;
+  vertical-align: -2px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
