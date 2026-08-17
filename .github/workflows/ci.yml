@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [saas, main]
+  pull_request:
+
+jobs:
+  test:
+    name: Smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install system deps (ffmpeg, python3, pip)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3 python3-pip
+
+      - name: Install edge-tts (used by the app for TTS word timings)
+        run: python3 -m pip install edge-tts
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Syntax check all JS files
+        run: |
+          find app scripts -name '*.js' -print0 | xargs -0 -n1 node --check
+          node --check app/server.js
+
+      - name: Run smoke suite
+        run: npm run smoke
