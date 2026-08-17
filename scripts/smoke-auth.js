@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const Database = require(path.join(__dirname, '..', 'node_modules', 'better-sqlite3'));
 
 const ROOT = path.join(__dirname, '..');
 const PORT = parseInt(process.env.SMOKE_PORT || '8299', 10);
@@ -111,6 +112,7 @@ async function main() {
       body: { email: 'smoke@example.com', password: 'password123' },
     });
     check('register returns a user', reg.status === 201 && Boolean(reg.data.user && reg.data.user.id));
+    const userIdA = reg.data.user.id;
     const jar = cookieOf(reg);
     check('register sets a session cookie', Boolean(jar));
 
@@ -169,6 +171,12 @@ async function main() {
     const aList = await request('GET', '/api/jobs', { cookie: authedJar });
     check('user A sees all their projects', aList.data && aList.data.jobs.length === 2);
 
+    const uaDir = path.join(OUTPUT_DIR, userIdA);
+    check('outputs live in per-user folder (mp4)', fs.existsSync(path.join(uaDir, `${firstJobId}.mp4`)));
+    check('outputs live in per-user folder (srt)', fs.existsSync(path.join(uaDir, `${firstJobId}.srt`)));
+    check('outputs live in per-user folder (ass)', fs.existsSync(path.join(uaDir, `${firstJobId}.ass`)));
+    check('no flat output in OUTPUT_DIR root', !fs.existsSync(path.join(OUTPUT_DIR, `${firstJobId}.mp4`)));
+
     const regB = await request('POST', '/api/auth/register', {
       body: { email: 'other@example.com', password: 'password456' },
     });
@@ -192,6 +200,17 @@ async function main() {
     check('deleted output file returns 404', (await request('GET', `/api/outputs/${firstJobId}.mp4`, { cookie: authedJar })).status === 404);
     const aList2 = await request('GET', '/api/jobs', { cookie: authedJar });
     check('A has one project after delete', aList2.data && aList2.data.jobs.length === 1);
+
+    const secret = path.join(WORK_DIR, 'secret-dir');
+    const db = new Database(DB_PATH);
+    db.prepare(
+      'INSERT INTO projects (id, user_id, idea, script, language, caption_style, timing_mode, words_per_segment, status, error, error_code, meta, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    ).run('leak-test', userIdA, null, null, 'ar', 'word', 'auto', 4, 'failed', `boom at ${secret}`, 'render_failed', '{}', new Date().toISOString(), new Date().toISOString());
+    db.close();
+    const leak = await request('GET', '/api/jobs/leak-test', { cookie: authedJar });
+    const leaked = leak.data && leak.data.job && leak.data.job.error;
+    check('error paths are sanitized in API', leak.status === 200 && leaked && !leaked.includes(secret) && leaked.includes('[server path]'));
+    await request('DELETE', '/api/jobs/leak-test', { cookie: authedJar });
 
     console.log('----------------------------------------');
     console.log(`${checks - failures}/${checks} checks passed`);

@@ -28,6 +28,8 @@ const {
   GEMINI_API_KEY,
   GEMINI_MODEL,
   JOB_TIMEOUT_MS,
+  OUTPUT_RETENTION_DAYS,
+  MAX_SCRIPT_CHARS,
 } = config;
 
 let FFMPEG_BIN = 'ffmpeg';
@@ -53,7 +55,7 @@ const LANGUAGES = Object.keys(VOICES);
 
 const app = express();
 app.set('trust proxy', config.TRUST_PROXY);
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '512kb' }));
 
 app.use(
   session({
@@ -460,14 +462,16 @@ async function processJob(row) {
     await fsp.writeFile(assPath, assContent, 'utf-8');
 
     const outputFile = `${jobId}.mp4`;
-    const outputPath = path.join(OUTPUT_DIR, outputFile);
+    const userDir = path.join(OUTPUT_DIR, row.user_id);
+    await fsp.mkdir(userDir, { recursive: true });
+    const outputPath = path.join(userDir, outputFile);
     updateJob(jobId, { meta: { stage: 'render' } });
     await renderVideo({ audioPath, assPath, outputPath, duration });
 
     // Downloadable subtitle files (style-independent .srt + styled .ass).
-    await fsp.copyFile(assPath, path.join(OUTPUT_DIR, `${jobId}.ass`));
+    await fsp.copyFile(assPath, path.join(userDir, `${jobId}.ass`));
     await fsp.writeFile(
-      path.join(OUTPUT_DIR, `${jobId}.srt`),
+      path.join(userDir, `${jobId}.srt`),
       buildSrt(segments),
       'utf-8'
     );
@@ -477,7 +481,7 @@ async function processJob(row) {
     const current = projectsRepo.findById(jobId);
     if (!current || current.status !== 'processing') {
       for (const ext of ['mp4', 'srt', 'ass']) {
-        await fsp.unlink(path.join(OUTPUT_DIR, `${jobId}.${ext}`)).catch(() => {});
+        await fsp.unlink(path.join(userDir, `${jobId}.${ext}`)).catch(() => {});
       }
       console.log(`[job ${jobId}] discarded outputs (project deleted mid-render)`);
       return;
@@ -545,6 +549,118 @@ function recoverStaleJobs() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Storage lifecycle                                                    */
+/* ------------------------------------------------------------------ */
+
+const OUTPUT_EXTS = ['mp4', 'srt', 'ass'];
+
+function deleteProjectFiles(userId, id) {
+  const dir = path.join(OUTPUT_DIR, userId);
+  for (const ext of OUTPUT_EXTS) {
+    const file = path.join(dir, `${id}.${ext}`);
+    try {
+      fs.unlinkSync(file);
+    } catch (_) {}
+  }
+}
+
+// Move legacy flat output files (data/output/<id>.*) into per-user folders.
+function migrateOutputLayout() {
+  const rows = getDb()
+    .prepare("SELECT id, user_id, status FROM projects WHERE status = 'completed'")
+    .all();
+  for (const r of rows) {
+    const userDir = path.join(OUTPUT_DIR, r.user_id);
+    fs.mkdirSync(userDir, { recursive: true });
+    for (const ext of OUTPUT_EXTS) {
+      const oldFile = path.join(OUTPUT_DIR, `${r.id}.${ext}`);
+      const newFile = path.join(userDir, `${r.id}.${ext}`);
+      if (!fs.existsSync(newFile) && fs.existsSync(oldFile)) {
+        fs.renameSync(oldFile, newFile);
+        console.log(`[storage] moved ${r.id}.${ext} into per-user folder`);
+      }
+    }
+  }
+}
+
+function retireExpiredProjects() {
+  const cutoffMs = Date.now() - OUTPUT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const rows = getDb()
+    .prepare(
+      'SELECT id, user_id, COALESCE(completed_at, created_at) AS last FROM projects WHERE COALESCE(completed_at, created_at) < ?'
+    )
+    .all(new Date(cutoffMs).toISOString());
+  for (const r of rows) {
+    deleteProjectFiles(r.user_id, r.id);
+    projectsRepo.remove(r.id);
+    console.log(`[storage] expired ${r.id} (older than ${OUTPUT_RETENTION_DAYS}d)`);
+  }
+  return rows.length;
+}
+
+function sweepOrphanFiles() {
+  const known = new Set(
+    getDb().prepare('SELECT id FROM projects').all().map((r) => r.id)
+  );
+  const cutoffMs = Date.now() - OUTPUT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const dirs = [OUTPUT_DIR];
+  for (const entry of fs.readdirSync(OUTPUT_DIR)) {
+    const full = path.join(OUTPUT_DIR, entry);
+    let stat = null;
+    try {
+      stat = fs.statSync(full);
+    } catch (_) {}
+    if (stat && stat.isDirectory()) dirs.push(full);
+  }
+  let removed = 0;
+  for (const dir of dirs) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch (_) {
+      continue;
+    }
+    for (const e of entries) {
+      if (!/\.(mp4|srt|ass)$/.test(e)) continue;
+      const id = e.replace(/\.(mp4|srt|ass)$/, '');
+      if (known.has(id)) continue;
+      const full = path.join(dir, e);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoffMs) {
+          fs.rmSync(full, { force: true });
+          removed++;
+          console.log(`[storage] removed orphan ${path.relative(OUTPUT_DIR, full)}`);
+        }
+      } catch (_) {}
+    }
+  }
+  return removed;
+}
+
+function sweepWorkDirs() {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(WORK_DIR);
+  } catch (_) {}
+  for (const e of entries) {
+    fs.rmSync(path.join(WORK_DIR, e), { recursive: true, force: true });
+  }
+  if (entries.length) console.log(`[storage] cleared ${entries.length} stale work dir(s)`);
+}
+
+function runStorageSweep() {
+  try {
+    const expired = retireExpiredProjects();
+    const orphans = sweepOrphanFiles();
+    if (expired || orphans) {
+      console.log(`[storage] sweep done: ${expired} expired, ${orphans} orphans removed`);
+    }
+  } catch (err) {
+    console.error('[storage] sweep error:', err.message);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Routes                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -579,12 +695,7 @@ app.delete('/api/jobs/:id', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'job_not_found' });
   }
   projectsRepo.remove(req.params.id);
-  for (const ext of ['mp4', 'srt', 'ass']) {
-    const file = path.join(OUTPUT_DIR, `${req.params.id}.${ext}`);
-    try {
-      fs.unlinkSync(file);
-    } catch (_) {}
-  }
+  deleteProjectFiles(row.user_id, req.params.id);
   res.json({ ok: true });
 });
 
@@ -601,6 +712,13 @@ function validateGenerateBody(req, res) {
     res
       .status(400)
       .json({ error: 'invalid_request', message: '"script" must be a string' });
+    return null;
+  }
+  if (script && script.length > MAX_SCRIPT_CHARS) {
+    res.status(400).json({
+      error: 'script_too_long',
+      message: `Script exceeds the ${MAX_SCRIPT_CHARS}-character limit`,
+    });
     return null;
   }
   if (idea && !script && !GEMINI_API_KEY) {
@@ -660,7 +778,7 @@ app.get('/api/outputs/:file', requireAuth, (req, res) => {
   if (!row || row.user_id !== req.user.id) {
     return res.status(404).json({ error: 'file_not_found' });
   }
-  const full = path.join(OUTPUT_DIR, file);
+  const full = path.join(OUTPUT_DIR, row.user_id, file);
   if (!fs.existsSync(full)) {
     return res.status(404).json({ error: 'file_not_found' });
   }
@@ -694,6 +812,9 @@ async function boot() {
   initDb();
 
   recoverStaleJobs();
+  sweepWorkDirs();
+  migrateOutputLayout();
+  runStorageSweep();
 
   if (!isToolAvailable(FFMPEG_BIN)) {
     console.warn('[boot] WARNING: ffmpeg not found — rendering will fail');
@@ -709,6 +830,8 @@ async function boot() {
     const removed = sessionStore.cleanupExpired();
     if (removed > 0) console.log(`[sessions] cleaned ${removed} expired session(s)`);
   }, 60 * 60 * 1000).unref();
+
+  setInterval(runStorageSweep, 60 * 60 * 1000).unref();
 
   app.listen(PORT, HOST, () => {
     console.log(`[boot] shorts-video-mvp listening on http://${HOST}:${PORT}`);

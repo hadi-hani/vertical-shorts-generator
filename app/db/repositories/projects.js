@@ -1,6 +1,8 @@
 'use strict';
 
+const os = require('os');
 const { getDb } = require('../index');
+const config = require('../../config');
 
 const UPDATABLE = new Set([
   'status',
@@ -106,11 +108,30 @@ function toPublicProject(row) {
     outputUrl: row.output_url,
     subtitleSrtUrl: row.subtitle_srt_url,
     subtitleAssUrl: row.subtitle_ass_url,
-    error: row.error,
+    error: sanitizeError(row.error),
     errorCode: row.error_code,
     estimatedDuration: row.estimated_duration,
     meta: parseMeta(row.meta),
   };
+}
+
+function sanitizeError(msg) {
+  if (!msg) return msg;
+  let out = String(msg);
+  const sensitive = [
+    config.ROOT_DIR,
+    config.DATA_DIR,
+    config.OUTPUT_DIR,
+    config.WORK_DIR,
+    os.tmpdir(),
+    process.env.HOME,
+  ].filter(Boolean);
+  for (const dir of sensitive) {
+    if (out.includes(dir)) out = out.split(dir).join('[server path]');
+  }
+  out = out.replace(/\/tmp\/[A-Za-z0-9._/-]+/g, '[server path]');
+  out = out.replace(/\/(home|Users)\/[A-Za-z0-9._/-]+/g, '[server path]');
+  return out;
 }
 
 module.exports = { create, findById, listByUser, remove, update, toPublicProject, parseMeta, statusCounts };
