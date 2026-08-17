@@ -15,10 +15,13 @@ const config = require('./config');
 const session = require('express-session');
 const SqliteSessionStore = require('./db/session-store');
 const authRoutes = require('./routes/auth');
+const billingRoutes = require('./routes/billing');
 const { requireAuth } = require('./middleware/auth');
 const { initDb, getDb } = require('./db');
 const projectsRepo = require('./db/repositories/projects');
 const usageRepo = require('./db/repositories/usage');
+const billingRepo = require('./db/repositories/billing');
+const usersRepo = require('./db/repositories/users');
 const { log } = require('./lib/logger');
 const { requireAdmin } = require('./middleware/admin');
 const { backupDb } = require('./services/backup');
@@ -34,7 +37,6 @@ const {
   JOB_TIMEOUT_MS,
   OUTPUT_RETENTION_DAYS,
   MAX_SCRIPT_CHARS,
-  FREE_MONTHLY_VIDEO_LIMIT,
   DATA_DIR,
 } = config;
 
@@ -61,7 +63,14 @@ const LANGUAGES = Object.keys(VOICES);
 
 const app = express();
 app.set('trust proxy', config.TRUST_PROXY);
-app.use(express.json({ limit: '512kb' }));
+app.use(
+  express.json({
+    limit: '512kb',
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
 app.use(
   session({
@@ -80,6 +89,7 @@ app.use(
 );
 
 app.use('/api/auth', authRoutes);
+app.use('/api/billing', billingRoutes);
 
 /* ------------------------------------------------------------------ */
 /* Job persistence + tiny sequential queue (reads/writes SQLite)        */
@@ -688,17 +698,22 @@ function buildUsageView(userId) {
   const period = usageRepo.periodFor();
   const usage = usageRepo.getRow(userId, period);
   const consumed = usage ? usage.videos_generated : 0;
-  const remaining = Math.max(0, FREE_MONTHLY_VIDEO_LIMIT - consumed);
+  const user = usersRepo.findById(userId);
+  const plan = (user && user.plan) || 'free';
+  const limit = config.planLimit(plan);
+  const remaining = Math.max(0, limit - consumed);
   const [y, m] = period.split('-').map(Number);
   const resetsAt = new Date(Date.UTC(y, m, 1)).toISOString();
+  const sub = user && user.plan === 'premium' ? billingRepo.getByUser(userId) : null;
   return {
-    plan: 'free',
+    plan,
     period,
-    limit: FREE_MONTHLY_VIDEO_LIMIT,
+    limit,
     consumed,
     remaining,
     secondsGenerated: usage ? usage.seconds_generated : 0,
     resetsAt,
+    subscription: sub ? { status: sub.status } : null,
   };
 }
 
@@ -776,6 +791,7 @@ app.get('/api/admin/overview', requireAdmin, (req, res) => {
   } catch (_) {}
   res.json({
     stats: projectsRepo.stats(),
+    billing: { premiumUsers: billingRepo.premiumCount() },
     storage: {
       outputBytes: measureStorage(),
       dbBytes,
@@ -853,17 +869,20 @@ app.post('/api/generate/subtitles', requireAuth, (req, res) => {
   const v = validateGenerateBody(req, res);
   if (!v) return;
 
+  const user = usersRepo.findById(req.user.id);
+  const plan = (user && user.plan) || 'free';
+  const limit = config.planLimit(plan);
   const quota = usageRepo.checkAndIncrement(req.user.id, {
     videos: 1,
     seconds: 0,
-    limit: FREE_MONTHLY_VIDEO_LIMIT,
+    limit,
   });
   if (!quota.allowed) {
     const view = buildUsageView(req.user.id);
     const resets = new Date(view.resetsAt).toLocaleDateString('ar');
     return res.status(429).json({
       error: 'quota_exceeded',
-      message: `لقد استهلكت حصتك الشهرية المجانية (${FREE_MONTHLY_VIDEO_LIMIT} فيديو). سيتجدد رصيدك في ${resets}.`,
+      message: `لقد استهلكت حصتك الشهرية (${limit} فيديو). سيتجدد رصيدك في ${resets}، أو قم بالترقية إلى الخطة المدفوعة.`,
       usage: view,
     });
   }

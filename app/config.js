@@ -51,6 +51,13 @@ module.exports = {
   OUTPUT_RETENTION_DAYS: parseInt(process.env.OUTPUT_RETENTION_DAYS || '7', 10),
   MAX_SCRIPT_CHARS: parseInt(process.env.MAX_SCRIPT_CHARS || '5000', 10),
   FREE_MONTHLY_VIDEO_LIMIT: parseInt(process.env.FREE_MONTHLY_VIDEO_LIMIT || '10', 10),
+  PREMIUM_MONTHLY_VIDEO_LIMIT: parseInt(process.env.PREMIUM_MONTHLY_VIDEO_LIMIT || '200', 10),
+  PAYPAL_MODE: process.env.PAYPAL_MODE || 'sandbox', // sandbox | live | mock
+  PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID || '',
+  PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET || '',
+  PAYPAL_PLAN_ID: process.env.PAYPAL_PLAN_ID || '',
+  PAYPAL_WEBHOOK_ID: process.env.PAYPAL_WEBHOOK_ID || '',
+  PAYPAL_BASE_URL: process.env.PAYPAL_BASE_URL || '', // public base used for PayPal return URLs
   ADMIN_EMAILS: (process.env.ADMIN_EMAILS || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
@@ -59,3 +66,10 @@ module.exports = {
   BACKUP_KEEP: parseInt(process.env.BACKUP_KEEP || '5', 10),
   BACKUP_INTERVAL_MS: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
 };
+
+module.exports.PLAN_LIMITS = {
+  free: module.exports.FREE_MONTHLY_VIDEO_LIMIT,
+  premium: module.exports.PREMIUM_MONTHLY_VIDEO_LIMIT,
+};
+
+module.exports.planLimit = (plan) => module.exports.PLAN_LIMITS[plan] || module.exports.PLAN_LIMITS.free;
