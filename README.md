@@ -51,6 +51,11 @@ sync with the speech. The web UI is a single tool:
   default 10 videos) is checked before a job is queued; over-quota submissions
   get a clear Arabic `429 quota_exceeded` message. The dashboard shows how much
   is consumed, what remains, and when it resets (`GET /api/usage`).
+- **Admin observability** — structured JSON logs per job/user (no passwords or
+  secrets), protected internal admin endpoints (`ADMIN_EMAILS`) to review
+  failed jobs and the queue plus job/success/duration/storage counters, a
+  richer `/api/health` (SQLite + disk + FFmpeg), and automatic SQLite online
+  backups (daily, keep N).
 
 ## How it works
 
@@ -126,6 +131,10 @@ root, which is loaded automatically and git-ignored).
 | `OUTPUT_RETENTION_DAYS` | `7`           | Outputs (and orphan files) older than this many days are deleted by the hourly sweeper. |
 | `MAX_SCRIPT_CHARS` | `5000`                | Reject scripts longer than this. |
 | `FREE_MONTHLY_VIDEO_LIMIT` | `10`           | Free-plan monthly video quota. Submissions beyond it return `429 quota_exceeded` with an Arabic message until the period resets. |
+| `ADMIN_EMAILS` | *(empty)* | Comma-separated emails allowed to call the internal `/api/admin/*` endpoints (job review, queue, overview counters). Empty = no admin access. |
+| `BACKUP_DIR`   | `./data/backups` | Where SQLite online backups are written. |
+| `BACKUP_KEEP`  | `5`           | Number of backups to keep (older ones are pruned). |
+| `BACKUP_INTERVAL_MS` | `86400000` | Backup interval (ms). A backup also runs at boot. |
 
 The Arabic voice and font are defined in `app/server.js`:
 
@@ -199,6 +208,11 @@ curl -O http://localhost:8283/api/outputs/34d29fa4-....mp4
 | `/api/jobs/:id`       | DELETE | Delete a project the current user owns (auth required). |
 | `/api/usage`          | GET    | Current free-plan quota: consumed, remaining, reset date (auth required). |
 | `/api/generate-script`| POST   | Generate a script only (`{"idea": "..."}`).  |
+| `/api/admin/overview` | GET    | Internal: job counters (total/by-status/completed, total & avg processing ms) + storage bytes. Requires a session whose email is in `ADMIN_EMAILS`. |
+| `/api/admin/jobs`     | GET    | Internal: review jobs across all users, filterable by `status`, `limit`, `offset`. Same admin requirement. |
+
+`/api/health` also reports `db.ok` (SQLite round-trip), `disk` (free/total bytes
+and free percent), and `ffmpegAvailable`.
 
 ## Project structure
 

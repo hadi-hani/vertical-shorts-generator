@@ -92,6 +92,31 @@ function statusCounts() {
   return counts;
 }
 
+function listForAdmin({ status, limit = 50, offset = 0 } = {}) {
+  const where = status ? 'WHERE status = ?' : '';
+  const params = status ? [status, limit, offset] : [limit, offset];
+  return getDb()
+    .prepare(`SELECT * FROM projects ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .all(...params);
+}
+
+function stats() {
+  const byStatus = statusCounts();
+  const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
+  const proc = getDb()
+    .prepare(
+      "SELECT COUNT(*) AS c, COALESCE(SUM(CAST(json_extract(meta, '$.processingMs') AS INTEGER)), 0) AS totalMs FROM projects WHERE status = 'completed'"
+    )
+    .get();
+  return {
+    total,
+    byStatus,
+    completed: proc.c,
+    totalProcessingMs: proc.totalMs,
+    avgProcessingMs: proc.c ? Math.round(proc.totalMs / proc.c) : 0,
+  };
+}
+
 function toPublicProject(row) {
   return {
     id: row.id,
@@ -134,4 +159,4 @@ function sanitizeError(msg) {
   return out;
 }
 
-module.exports = { create, findById, listByUser, remove, update, toPublicProject, parseMeta, statusCounts };
+module.exports = { create, findById, listByUser, remove, update, toPublicProject, parseMeta, statusCounts, listForAdmin, stats };

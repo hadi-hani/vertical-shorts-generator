@@ -51,4 +51,11 @@ module.exports = {
   OUTPUT_RETENTION_DAYS: parseInt(process.env.OUTPUT_RETENTION_DAYS || '7', 10),
   MAX_SCRIPT_CHARS: parseInt(process.env.MAX_SCRIPT_CHARS || '5000', 10),
   FREE_MONTHLY_VIDEO_LIMIT: parseInt(process.env.FREE_MONTHLY_VIDEO_LIMIT || '10', 10),
+  ADMIN_EMAILS: (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+  BACKUP_DIR: process.env.BACKUP_DIR || path.join(ROOT_DIR, 'data', 'backups'),
+  BACKUP_KEEP: parseInt(process.env.BACKUP_KEEP || '5', 10),
+  BACKUP_INTERVAL_MS: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
 };
