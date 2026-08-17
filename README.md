@@ -43,6 +43,10 @@ sync with the speech. The web UI is a single tool:
 - **Project dashboard** — a `/projects` page lists your projects (idea/script
   snippet, status badge, MP4/SRT/ASS downloads, delete) with an Arabic empty
   state; only your own projects are visible.
+- **Storage lifecycle** — outputs are stored in a per-user folder under
+  `data/output/<user_id>/`, temp work dirs are always wiped, and completed
+  projects (plus orphaned files) older than `OUTPUT_RETENTION_DAYS` (default 7)
+  are cleaned automatically. API errors are scrubbed of filesystem paths.
 
 ## How it works
 
@@ -115,6 +119,8 @@ root, which is loaded automatically and git-ignored).
 | `COOKIE_SECURE`  | `0`                     | Set to `1` when serving over HTTPS.                     |
 | `TRUST_PROXY`    | `0`                     | Set to the number of reverse-proxy hops (e.g. `1`) behind Nginx/Cloudflare. |
 | `JOB_TIMEOUT_MS` | `600000`                | Overall per-job time limit (ms); a job that exceeds it is killed and marked `failed` with `errorCode=job_timeout`. |
+| `OUTPUT_RETENTION_DAYS` | `7`           | Outputs (and orphan files) older than this many days are deleted by the hourly sweeper. |
+| `MAX_SCRIPT_CHARS` | `5000`                | Reject scripts longer than this. |
 
 The Arabic voice and font are defined in `app/server.js`:
 

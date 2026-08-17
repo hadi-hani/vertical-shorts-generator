@@ -48,4 +48,6 @@ module.exports = {
   TRUST_PROXY,
   DB_PATH: process.env.DB_PATH || path.join(ROOT_DIR, 'data', 'app.db'),
   JOB_TIMEOUT_MS: parseInt(process.env.JOB_TIMEOUT_MS || '600000', 10),
+  OUTPUT_RETENTION_DAYS: parseInt(process.env.OUTPUT_RETENTION_DAYS || '7', 10),
+  MAX_SCRIPT_CHARS: parseInt(process.env.MAX_SCRIPT_CHARS || '5000', 10),
 };
