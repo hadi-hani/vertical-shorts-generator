@@ -18,6 +18,7 @@ const authRoutes = require('./routes/auth');
 const { requireAuth } = require('./middleware/auth');
 const { initDb, getDb } = require('./db');
 const projectsRepo = require('./db/repositories/projects');
+const usageRepo = require('./db/repositories/usage');
 
 const {
   PUBLIC_DIR,
@@ -30,6 +31,7 @@ const {
   JOB_TIMEOUT_MS,
   OUTPUT_RETENTION_DAYS,
   MAX_SCRIPT_CHARS,
+  FREE_MONTHLY_VIDEO_LIMIT,
 } = config;
 
 let FFMPEG_BIN = 'ffmpeg';
@@ -504,6 +506,7 @@ async function processJob(row) {
         audioDuration: Math.round(duration * 100) / 100,
       },
     });
+    usageRepo.increment(row.user_id, { videos: 0, seconds: Math.round(duration) });
   } catch (err) {
     const code = timedOut ? 'job_timeout' : err.code || 'render_failed';
     const message = timedOut
@@ -661,6 +664,28 @@ function runStorageSweep() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Free-plan quota                                                      */
+/* ------------------------------------------------------------------ */
+
+function buildUsageView(userId) {
+  const period = usageRepo.periodFor();
+  const usage = usageRepo.getRow(userId, period);
+  const consumed = usage ? usage.videos_generated : 0;
+  const remaining = Math.max(0, FREE_MONTHLY_VIDEO_LIMIT - consumed);
+  const [y, m] = period.split('-').map(Number);
+  const resetsAt = new Date(Date.UTC(y, m, 1)).toISOString();
+  return {
+    plan: 'free',
+    period,
+    limit: FREE_MONTHLY_VIDEO_LIMIT,
+    consumed,
+    remaining,
+    secondsGenerated: usage ? usage.seconds_generated : 0,
+    resetsAt,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Routes                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -679,6 +704,10 @@ app.get('/api/health', (req, res) => {
 app.get('/api/jobs', requireAuth, (req, res) => {
   const rows = projectsRepo.listByUser(req.user.id);
   res.json({ jobs: rows.map(projectsRepo.toPublicProject) });
+});
+
+app.get('/api/usage', requireAuth, (req, res) => {
+  res.json({ usage: buildUsageView(req.user.id) });
 });
 
 app.get('/api/jobs/:id', requireAuth, (req, res) => {
@@ -734,6 +763,22 @@ function validateGenerateBody(req, res) {
 app.post('/api/generate/subtitles', requireAuth, (req, res) => {
   const v = validateGenerateBody(req, res);
   if (!v) return;
+
+  const quota = usageRepo.checkAndIncrement(req.user.id, {
+    videos: 1,
+    seconds: 0,
+    limit: FREE_MONTHLY_VIDEO_LIMIT,
+  });
+  if (!quota.allowed) {
+    const view = buildUsageView(req.user.id);
+    const resets = new Date(view.resetsAt).toLocaleDateString('ar');
+    return res.status(429).json({
+      error: 'quota_exceeded',
+      message: `لقد استهلكت حصتك الشهرية المجانية (${FREE_MONTHLY_VIDEO_LIMIT} فيديو). سيتجدد رصيدك في ${resets}.`,
+      usage: view,
+    });
+  }
+
   const b = req.body || {};
   const captionStyle = CAPTION_STYLES[b.captionStyle] || CAPTION_STYLES.word;
   const timingMode = TIMING_MODES[b.timingMode] || TIMING_MODES.auto;

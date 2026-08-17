@@ -50,4 +50,5 @@ module.exports = {
   JOB_TIMEOUT_MS: parseInt(process.env.JOB_TIMEOUT_MS || '600000', 10),
   OUTPUT_RETENTION_DAYS: parseInt(process.env.OUTPUT_RETENTION_DAYS || '7', 10),
   MAX_SCRIPT_CHARS: parseInt(process.env.MAX_SCRIPT_CHARS || '5000', 10),
+  FREE_MONTHLY_VIDEO_LIMIT: parseInt(process.env.FREE_MONTHLY_VIDEO_LIMIT || '10', 10),
 };

@@ -91,6 +91,7 @@ async function main() {
       WORK_DIR,
       NODE_ENV: 'test',
       SESSIONS_SECRET: 'smoke-test-session-secret-0123456789abcdef',
+      FREE_MONTHLY_VIDEO_LIMIT: '2',
     },
     stdio: ['ignore', 'ignore', 'inherit'],
   });
@@ -139,6 +140,10 @@ async function main() {
       body: { email: 'smoke@example.com', password: 'wrongpass1' },
     });
     check('wrong password rejected (401)', badLogin.status === 401);
+
+    check('GET /api/usage requires auth', (await request('GET', '/api/usage')).status === 401);
+    const u0 = await request('GET', '/api/usage', { cookie: authedJar });
+    check('usage starts at 0/2', u0.data && u0.data.usage && u0.data.usage.consumed === 0 && u0.data.usage.remaining === 2 && u0.data.usage.limit === 2);
 
     const SCRIPT =
       'مرحبا بك في تطبيق الكابشن العربي. هذا اختبار قصير للتأكد أن الميزة الجديدة لم تكسر شيئا.';
@@ -211,6 +216,17 @@ async function main() {
     const leaked = leak.data && leak.data.job && leak.data.job.error;
     check('error paths are sanitized in API', leak.status === 200 && leaked && !leaked.includes(secret) && leaked.includes('[server path]'));
     await request('DELETE', '/api/jobs/leak-test', { cookie: authedJar });
+
+    const u1 = await request('GET', '/api/usage', { cookie: authedJar });
+    check('usage consumed 2 after jobs', u1.data && u1.data.usage && u1.data.usage.consumed === 2 && u1.data.usage.remaining === 0 && u1.data.usage.secondsGenerated > 0);
+    const over = await request('POST', '/api/generate/subtitles', {
+      cookie: authedJar,
+      body: { script: 'نص يتجاوز الحصة المجانية المفروضة', captionStyle: 'word' },
+    });
+    check('quota exceeded blocked (429)', over.status === 429 && over.data && over.data.error === 'quota_exceeded');
+    check('quota message is Arabic', Boolean(over.data && over.data.message && /حصتك/.test(over.data.message)));
+    const uB2 = await request('GET', '/api/usage', { cookie: jarB });
+    check('user B usage independent (0/2)', uB2.data && uB2.data.usage && uB2.data.usage.consumed === 0 && uB2.data.usage.remaining === 2);
 
     console.log('----------------------------------------');
     console.log(`${checks - failures}/${checks} checks passed`);
