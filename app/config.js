@@ -31,6 +31,34 @@ if (!sessionsSecret) {
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SECURE === 'true';
 const TRUST_PROXY = parseInt(process.env.TRUST_PROXY || '0', 10);
 
+const PAYPAL_MODE = process.env.PAYPAL_MODE || 'sandbox';
+
+/* Validate required runtime config. In production a missing requirement is
+ * fatal; in development we warn so the app stays easy to run locally. */
+const REQUIRE = NODE_ENV === 'production';
+const requiredWarnings = [];
+if (NODE_ENV === 'production' && !sessionsSecret) {
+  throw new Error('SESSIONS_SECRET must be set in .env when NODE_ENV=production');
+}
+if (PAYPAL_MODE === 'live' || PAYPAL_MODE === 'sandbox') {
+  for (const key of [
+    'PAYPAL_CLIENT_ID',
+    'PAYPAL_CLIENT_SECRET',
+    'PAYPAL_PLAN_ID',
+    'PAYPAL_WEBHOOK_ID',
+    'PAYPAL_BASE_URL',
+  ]) {
+    if (!process.env[key]) {
+      const msg = `${key} must be set when PAYPAL_MODE=${PAYPAL_MODE}`;
+      if (REQUIRE) throw new Error(msg);
+      requiredWarnings.push(msg);
+    }
+  }
+}
+if (REQUIRE && !process.env.GEMINI_API_KEY) {
+  throw new Error('GEMINI_API_KEY must be set in .env when NODE_ENV=production');
+}
+
 module.exports = {
   ROOT_DIR,
   PUBLIC_DIR: path.join(ROOT_DIR, 'public'),
@@ -52,7 +80,7 @@ module.exports = {
   MAX_SCRIPT_CHARS: parseInt(process.env.MAX_SCRIPT_CHARS || '5000', 10),
   FREE_MONTHLY_VIDEO_LIMIT: parseInt(process.env.FREE_MONTHLY_VIDEO_LIMIT || '10', 10),
   PREMIUM_MONTHLY_VIDEO_LIMIT: parseInt(process.env.PREMIUM_MONTHLY_VIDEO_LIMIT || '200', 10),
-  PAYPAL_MODE: process.env.PAYPAL_MODE || 'sandbox', // sandbox | live | mock
+  PAYPAL_MODE, // sandbox | live | mock
   PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID || '',
   PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET || '',
   PAYPAL_PLAN_ID: process.env.PAYPAL_PLAN_ID || '',
@@ -63,9 +91,12 @@ module.exports = {
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean),
+  RATE_LIMIT_GENERATE_PER_MIN: parseInt(process.env.RATE_LIMIT_GENERATE_PER_MIN || '10', 10),
+  CORS_ORIGIN: process.env.CORS_ORIGIN || '',
   BACKUP_DIR: process.env.BACKUP_DIR || path.join(ROOT_DIR, 'data', 'backups'),
   BACKUP_KEEP: parseInt(process.env.BACKUP_KEEP || '5', 10),
   BACKUP_INTERVAL_MS: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
+  CONFIG_WARNINGS: requiredWarnings,
 };
 
 module.exports.PLAN_LIMITS = {

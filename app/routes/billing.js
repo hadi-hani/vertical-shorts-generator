@@ -110,15 +110,18 @@ router.post('/webhook', async (req, res) => {
 
   const event = req.body || {};
   const eventId = event.id;
-  if (!eventId) {
+  if (typeof eventId !== 'string' || !eventId) {
     return res.status(400).json({ error: 'missing_event_id' });
   }
-  if (!billingRepo.recordWebhookEvent(eventId, event.event_type || '', event)) {
+  const type = typeof event.event_type === 'string' ? event.event_type : '';
+  if (!type) {
+    return res.status(400).json({ error: 'missing_event_type' });
+  }
+  if (!billingRepo.recordWebhookEvent(eventId, type, event)) {
     return res.json({ ok: true, duplicate: true });
   }
 
-  const type = event.event_type || '';
-  const resource = event.resource || {};
+  const resource = event.resource && typeof event.resource === 'object' ? event.resource : {};
   const userId = resolveUserId(resource);
   const subId = resource.id || resource.billing_agreement_id || resource.subscription_id;
 

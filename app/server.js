@@ -6,6 +6,9 @@ const fsp = fs.promises;
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const express = require('express');
+const helmet = require('helmet');
+const compression = require('compression');
+const cors = require('cors');
 const sharp = require('sharp');
 
 const captions = require('./captions');
@@ -17,6 +20,8 @@ const SqliteSessionStore = require('./db/session-store');
 const authRoutes = require('./routes/auth');
 const billingRoutes = require('./routes/billing');
 const { requireAuth } = require('./middleware/auth');
+const { generateLimiter } = require('./middleware/rate-limit');
+const { httpError, normalizeError } = require('./lib/http-error');
 const { initDb, getDb } = require('./db');
 const projectsRepo = require('./db/repositories/projects');
 const usageRepo = require('./db/repositories/usage');
@@ -71,6 +76,17 @@ app.use(
     },
   })
 );
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // pages use inline scripts/styles on purpose
+    crossOriginResourcePolicy: false, // allow fonts/images from the same origin
+  })
+);
+app.use(compression());
+if (config.CORS_ORIGIN) {
+  app.use(cors({ origin: config.CORS_ORIGIN, credentials: true }));
+}
 
 app.use(
   session({
@@ -865,7 +881,7 @@ function validateGenerateBody(req, res) {
   return { idea, script, language: lang };
 }
 
-app.post('/api/generate/subtitles', requireAuth, (req, res) => {
+app.post('/api/generate/subtitles', requireAuth, generateLimiter, (req, res) => {
   const v = validateGenerateBody(req, res);
   if (!v) return;
 
@@ -907,11 +923,17 @@ app.post('/api/generate/subtitles', requireAuth, (req, res) => {
   res.status(202).json({ job: projectsRepo.toPublicProject(row) });
 });
 
-app.post('/api/generate-script', requireAuth, async (req, res) => {
+app.post('/api/generate-script', requireAuth, generateLimiter, async (req, res) => {
   const { idea, language } = req.body || {};
   const lang = LANGUAGES.includes(language) ? language : 'ar';
-  if (!idea) {
+  if (typeof idea !== 'string' || !idea.trim()) {
     return res.status(400).json({ error: 'invalid_request', message: 'Provide "idea"' });
+  }
+  if (idea.length > MAX_SCRIPT_CHARS * 4) {
+    return res.status(400).json({
+      error: 'idea_too_long',
+      message: 'الفكرة طويلة جداً، اختصرها ثم أعد المحاولة',
+    });
   }
   try {
     const script = await generateScript(idea);
@@ -958,6 +980,43 @@ if (fs.existsSync(path.join(PUBLIC_DIR, 'index.html'))) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Not found + centralized error handling                               */
+/* ------------------------------------------------------------------ */
+
+app.use((req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'not_found', message: 'المسار غير موجود' });
+  }
+  const notFoundPage = path.join(PUBLIC_DIR, '404.html');
+  if (fs.existsSync(notFoundPage)) {
+    return res.status(404).sendFile(notFoundPage);
+  }
+  res.status(404).type('text/plain').send('404 — Not found');
+});
+
+app.use((err, req, res, next) => {
+  const { status, code, message } = normalizeError(err);
+  if (status >= 500) {
+    log('error', 'request_failed', {
+      method: req.method,
+      path: req.path,
+      userId: (req.session && req.session.userId) || null,
+      status,
+      code,
+      message: err.message,
+    });
+  }
+  if (req.path.startsWith('/api/')) {
+    return res.status(status).json({ error: code, message });
+  }
+  const errorPage = path.join(PUBLIC_DIR, `${status}.html`);
+  if (fs.existsSync(errorPage)) {
+    return res.status(status).sendFile(errorPage);
+  }
+  res.status(status).type('text/plain').send(`${status} — ${message}`);
+});
+
+/* ------------------------------------------------------------------ */
 /* Boot                                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -979,6 +1038,9 @@ async function boot() {
     console.warn(
       '[boot] WARNING: SESSIONS_SECRET not set in .env — using a random secret; sessions reset on restart'
     );
+  }
+  for (const w of config.CONFIG_WARNINGS) {
+    console.warn(`[boot] WARNING: ${w}`);
   }
 
   const sessionStore = new SqliteSessionStore();
