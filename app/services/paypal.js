@@ -108,7 +108,11 @@ async function cancelSubscription(subId) {
 }
 
 async function verifyWebhook(headers, body) {
-  if (config.PAYPAL_MODE === 'mock') return true;
+  if (config.PAYPAL_MODE === 'mock') {
+    /* In tests you can force signature failures via PAYPAL_MOCK_VERIFY=0 */
+    if (process.env.PAYPAL_MOCK_VERIFY === '0') return false;
+    return true;
+  }
   const verify = await api('/v1/notifications/verify-webhook-signature', {
     method: 'POST',
     body: JSON.stringify({

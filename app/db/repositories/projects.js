@@ -117,6 +117,22 @@ function stats() {
   };
 }
 
+function countByUser(userId) {
+  return getDb().prepare('SELECT COUNT(*) AS c FROM projects WHERE user_id = ?').get(userId).c;
+}
+
+function countActive(userId) {
+  return getDb()
+    .prepare("SELECT COUNT(*) AS c FROM projects WHERE user_id = ? AND status IN ('queued', 'processing')")
+    .get(userId).c;
+}
+
+function countTotalActive() {
+  return getDb()
+    .prepare("SELECT COUNT(*) AS c FROM projects WHERE status IN ('queued', 'processing')")
+    .get().c;
+}
+
 function toPublicProject(row) {
   return {
     id: row.id,
@@ -159,4 +175,4 @@ function sanitizeError(msg) {
   return out;
 }
 
-module.exports = { create, findById, listByUser, remove, update, toPublicProject, parseMeta, statusCounts, listForAdmin, stats };
+module.exports = { create, findById, listByUser, remove, update, toPublicProject, parseMeta, statusCounts, listForAdmin, stats, countByUser, countActive, countTotalActive };

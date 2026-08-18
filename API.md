@@ -81,7 +81,10 @@ or `script`. Queue position returned; poll `GET /api/jobs/:id`.
 `202 Accepted` → `{ "job": { "id", "status": "queued", ... } }`
 
 Errors: `400 invalid_request`, `400 gemini_not_configured`, `429 quota_exceeded`
-(payload includes `usage`), `429 too_many_requests`.
+(payload includes `usage`), `429 too_many_requests`, `429 too_many_jobs`
+(per-user concurrency cap `MAX_JOBS_PER_USER` reached), `429 queue_full`
+(global backlog cap `MAX_QUEUED_JOBS` reached), `429 project_limit`
+(`MAX_PROJECTS_PER_USER` reached).
 
 ### `POST /api/generate-script`
 

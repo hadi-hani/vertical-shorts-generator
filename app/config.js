@@ -121,6 +121,17 @@ module.exports = {
   BACKUP_KEEP: parseInt(process.env.BACKUP_KEEP || '5', 10),
   BACKUP_INTERVAL_MS: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
   CONFIG_WARNINGS: requiredWarnings,
+
+  /* Job queue / concurrency caps. The global sequential queue already runs
+   * jobs one-at-a-time; these caps prevent unbounded growth when many users
+   * submit simultaneously. */
+  MAX_JOBS_PER_USER: parseInt(process.env.MAX_JOBS_PER_USER || '2', 10),
+  MAX_QUEUED_JOBS: parseInt(process.env.MAX_QUEUED_JOBS || '50', 10),
+  MAX_PROJECTS_PER_USER: parseInt(process.env.MAX_PROJECTS_PER_USER || '100', 10),
+
+  /* PayPal mock-verification switch — only honored in PAYPAL_MODE=mock so
+   * tests can force signature failures without touching real credentials. */
+  PAYPAL_MOCK_VERIFY: process.env.PAYPAL_MOCK_VERIFY !== '0',
 };
 
 module.exports.PLAN_LIMITS = {

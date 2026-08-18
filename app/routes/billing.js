@@ -7,6 +7,7 @@ const { requireAuth } = require('../middleware/auth');
 const paypal = require('../services/paypal');
 const billingRepo = require('../db/repositories/billing');
 const usersRepo = require('../db/repositories/users');
+const events = require('../services/subscription-events');
 const { log } = require('../lib/logger');
 
 const router = express.Router();
@@ -28,23 +29,10 @@ function resolveUserId(resource) {
   return null;
 }
 
-const ACTIVATE_EVENTS = [
-  'BILLING.SUBSCRIPTION.ACTIVATED',
-  'BILLING.SUBSCRIPTION.APPROVED',
-  'PAYMENT.SALE.COMPLETED',
-];
-const DEACTIVATE_EVENTS = [
-  'BILLING.SUBSCRIPTION.CANCELLED',
-  'BILLING.SUBSCRIPTION.EXPIRED',
-  'BILLING.SUBSCRIPTION.SUSPENDED',
-  'PAYMENT.SALE.REFUNDED',
-  'PAYMENT.SALE.REVERSED',
-];
-
 router.post('/checkout', requireAuth, async (req, res) => {
   const user = usersRepo.findById(req.user.id);
   if (!user) {
-    return res.status(401).json({ error: 'unauthorized', message: 'يجب تسجيل الدخول أولاً' });
+    return res.status(401).json({ error: 'unauthorized', message: 'يجب تسجيل الدخول أولاُ' });
   }
   if (user.plan === 'premium') {
     return res.status(409).json({ error: 'already_premium', message: 'اشتراكك مفعّل بالفعل' });
@@ -52,7 +40,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
   if (!paypal.isConfigured()) {
     return res
       .status(503)
-      .json({ error: 'paypal_not_configured', message: 'الدفع غير متاح حالياً، حاول لاحقاً' });
+      .json({ error: 'paypal_not_configured', message: 'الدفع غير متاح حالياُ، حاول لاحقاُ' });
   }
   try {
     const sub = await paypal.createSubscription({
@@ -67,7 +55,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
     log('error', 'billing_checkout_failed', { userId: user.id, message: err.message });
     res
       .status(502)
-      .json({ error: 'checkout_failed', message: 'تعذر إنشاء جلسة الدفع، حاول لاحقاً' });
+      .json({ error: 'checkout_failed', message: 'تعذر إنشاء جلسة الدفع، حاول لاحقاُ' });
   }
 });
 
@@ -85,7 +73,7 @@ router.post('/cancel', requireAuth, async (req, res) => {
     log('error', 'billing_cancel_failed', { userId: user.id, message: err.message });
     return res
       .status(502)
-      .json({ error: 'cancel_failed', message: 'تعذر إلغاء الاشتراك، حاول لاحقاً' });
+      .json({ error: 'cancel_failed', message: 'تعذر إلغاء الاشتراك، حاول لاحقاُ' });
   }
   billingRepo.setUserPlan(user.id, 'free');
   log('info', 'billing_cancelled', {
@@ -125,43 +113,48 @@ router.post('/webhook', async (req, res) => {
   const userId = resolveUserId(resource);
   const subId = resource.id || resource.billing_agreement_id || resource.subscription_id;
 
-  if (ACTIVATE_EVENTS.includes(type)) {
-    if (userId) {
-      billingRepo.setUserPlan(userId, 'premium');
-      if (subId) {
-        billingRepo.upsertSubscription({
-          id: subId,
-          userId,
-          status: 'ACTIVE',
-          paypalEmail: resource.subscriber && resource.subscriber.email_address,
-        });
-      }
+  /* Best-effort decision: the pure module guards against stale/out-of-order
+   * events by requiring sub-id match and skipping obvious duplicates. */
+  const currentSub = userId ? billingRepo.getByUser(userId) : null;
+  const { action, note } = events.decide({ eventType: type, subId, currentSub, userId });
+  log('info', 'billing_webhook_decision', {
+    eventType: type,
+    userId: userId || null,
+    paypalSubscriptionId: subId || null,
+    action,
+    note,
+  });
+
+  if (action === 'activate' && userId) {
+    billingRepo.setUserPlan(userId, 'premium');
+    if (subId) {
+      billingRepo.upsertSubscription({
+        id: subId,
+        userId,
+        status: 'ACTIVE',
+        paypalEmail: resource.subscriber && resource.subscriber.email_address,
+      });
     }
-  } else if (DEACTIVATE_EVENTS.includes(type)) {
-    if (userId) billingRepo.setUserPlan(userId, 'free');
+  } else if (action === 'deactivate' && userId) {
+    billingRepo.setUserPlan(userId, 'free');
     if (userId && subId) {
       billingRepo.upsertSubscription({ id: subId, userId, status: 'INACTIVE' });
     }
   }
 
-  log('info', 'billing_webhook', {
-    eventType: type,
-    userId: userId || null,
-    paypalSubscriptionId: subId || null,
-  });
   res.json({ ok: true });
 });
 
 /* Simple Arabic pages shown after PayPal redirects the buyer back. */
 router.get('/success', (req, res) => {
   res.send(
-    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>شكراً</title>' +
+    '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>شكراُ</title>' +
       '<meta http-equiv="refresh" content="4;url=/projects">' +
       '</head><body style="font-family:sans-serif;text-align:center;padding-top:3rem">' +
       '<h2>تم تفعيل اشتراكك!</h2>' +
-      '<p id="count">سيتم تحويلك إلى مشاريعك خلال 4 ثوانٍ…</p>' +
+      '<p id="count">سيتم تحويلك إلى مشاريعك خلال 4 ثوانٍ...</p>' +
       '<p><a href="/projects">الذهاب إلى مشاريعي الآن</a></p>' +
-      '<script>let n=4;setInterval(()=>{n--;if(n>0)document.getElementById("count").textContent="سيتم تحويلك إلى مشاريعك خلال "+n+" ثوانٍ…";},1000);</script>' +
+      '<script>let n=4;setInterval(()=>{n--;if(n>0)document.getElementById("count").textContent="سيتم تحويلك إلى مشاريعك خلال "+n+" ثوانٍ...";},1000);</script>' +
       '</body></html>'
   );
 });
