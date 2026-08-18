@@ -17,12 +17,16 @@ const PRODUCT_NAME = 'Shorts Generator';
 const PLAN_NAME = 'Shorts Generator Premium (Monthly)';
 const PLAN_DESC = 'Monthly premium plan: larger video quota.';
 
+/* All events the app handles (see app/services/subscription-events.js). */
 const WEBHOOK_EVENTS = [
   'BILLING.SUBSCRIPTION.ACTIVATED',
+  'BILLING.SUBSCRIPTION.APPROVED',
   'BILLING.SUBSCRIPTION.CANCELLED',
   'BILLING.SUBSCRIPTION.EXPIRED',
   'BILLING.SUBSCRIPTION.SUSPENDED',
+  'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
   'PAYMENT.SALE.COMPLETED',
+  'PAYMENT.SALE.DENIED',
   'PAYMENT.SALE.REFUNDED',
   'PAYMENT.SALE.REVERSED',
 ];
