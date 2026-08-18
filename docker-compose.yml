@@ -3,10 +3,18 @@ services:
     build: .
     ports:
       - "8283:8283"
+    env_file: .env
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - NODE_ENV=production
-      - PORT=8283
+    restart: unless-stopped
+    # Persist the whole data directory: SQLite DB (data/app.db), outputs,
+    # work files and backups all live under ./data so they survive
+    # container recreation/upgrades.
     volumes:
-      - ./data/output:/app/data/output
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8283/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

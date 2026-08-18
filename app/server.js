@@ -939,6 +939,29 @@ app.post('/api/generate/subtitles', requireAuth, generateLimiter, (req, res) => 
   const v = validateGenerateBody(req, res);
   if (!v) return;
 
+  /* Concurrency / backlog guards — fail fast before touching quotas. */
+  const userActiveJobs = projectsRepo.countActive(req.user.id);
+  if (userActiveJobs >= config.MAX_JOBS_PER_USER) {
+    return res.status(429).json({
+      error: 'too_many_jobs',
+      message: `كل حسابك لا يمكن أن يتجاوز ${config.MAX_JOBS_PER_USER} مشروع قيد المعالجة في وقت واحد`,
+    });
+  }
+  const globalActiveJobs = projectsRepo.countTotalActive();
+  if (globalActiveJobs >= config.MAX_QUEUED_JOBS) {
+    return res.status(429).json({
+      error: 'queue_full',
+      message: 'الصف العالمي ممتلئ حالياً، حاول لاحقاُ',
+    });
+  }
+  const currentProjectCount = projectsRepo.countByUser(req.user.id);
+  if (currentProjectCount >= config.MAX_PROJECTS_PER_USER) {
+    return res.status(429).json({
+      error: 'project_limit',
+      message: `تم الوصول للحد الأقصى (${config.MAX_PROJECTS_PER_USER} مشروع) لحسابك؛ احذف مشاريع قديمة أو ترقّ`,
+    });
+  }
+
   const user = usersRepo.findById(req.user.id);
   const plan = (user && user.plan) || 'free';
   const limit = config.planLimit(plan);

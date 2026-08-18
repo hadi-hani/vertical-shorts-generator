@@ -318,6 +318,73 @@ async function main() {
     const cancelNoSub = await request('POST', '/api/billing/cancel', { cookie: authedJar });
     check('cancel with no active subscription rejected (400)', cancelNoSub.status === 400);
 
+    /* --- Payment-failed / refund / delayed-webhook cases (mock mode) --- */
+    const refunded = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-refund-1',
+        event_type: 'PAYMENT.SALE.REFUNDED',
+        resource: { id: 'sub-test-1', custom_id: userIdA },
+      },
+    });
+    check('webhook REFUNDED accepted', refunded.status === 200);
+    const uRefund = await request('GET', '/api/usage', { cookie: authedJar });
+    check('plan downgrades after refund', uRefund.data && uRefund.data.usage && uRefund.data.usage.plan === 'free');
+
+    const paymentFailed = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-payfail-1',
+        event_type: 'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
+        resource: { id: 'sub-test-1', custom_id: userIdA },
+      },
+    });
+    check('webhook PAYMENT.FAILED accepted', paymentFailed.status === 200);
+
+    // Re-activate via a fresh checkout+approve flow in mock mode.
+    const checkout2 = await request('POST', '/api/billing/checkout', { cookie: authedJar });
+    check('checkout works again after downgrade', checkout2.status === 200);
+    const activate2 = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-activate-2',
+        event_type: 'BILLING.SUBSCRIPTION.ACTIVATED',
+        resource: { id: 'sub-test-2', custom_id: userIdA },
+      },
+    });
+    check('webhook second activation accepted', activate2.status === 200);
+    const uPremium2 = await request('GET', '/api/usage', { cookie: authedJar });
+    check(
+      'plan back to premium after new subscription',
+      uPremium2.data && uPremium2.data.usage && uPremium2.data.usage.plan === 'premium'
+    );
+
+    /* Delayed webhook protection: send an ACTIVATED for the OLD sub-id after
+     * it was already cancelled — must be ignored, not re-activate. */
+    const staleActivate = await request('POST', '/api/billing/webhook', {
+      body: {
+        id: 'evt-stale-1',
+        event_type: 'BILLING.SUBSCRIPTION.ACTIVATED',
+        resource: { id: 'sub-test-1', custom_id: userIdA }, // old sub
+      },
+    });
+    check('stale delayed ACTIVATE ignored', staleActivate.status === 200);
+    const uStale = await request('GET', '/api/usage', { cookie: authedJar });
+    check(
+      'plan stays premium despite stale activate (old sub)',
+      uStale.data && uStale.data.usage && uStale.data.usage.plan === 'premium'
+    );
+
+    /* Limits / body caps */
+    const tooLongScript = await request('POST', '/api/generate/subtitles', {
+      cookie: authedJar,
+      body: { script: 'x'.repeat(6000), language: 'ar', captionStyle: 'word' },
+    });
+    check('script exceeds MAX_SCRIPT_CHARS (400)', tooLongScript.status === 400);
+
+    const tooLongIdea = await request('POST', '/api/generate-script', {
+      cookie: authedJar,
+      body: { idea: 'y'.repeat(21000) },
+    });
+    check('idea exceeds limit (400)', tooLongIdea.status === 400);
+
     console.log('----------------------------------------');
     console.log(`${checks - failures}/${checks} checks passed`);
   } finally {

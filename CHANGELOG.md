@@ -5,22 +5,33 @@ merged into the `saas` branch; `main` is reserved for release tags.
 
 ## [Unreleased]
 
+### Added
+- **Production-readiness** — concurrency/backlog limits (`MAX_JOBS_PER_USER`,
+  `MAX_QUEUED_JOBS`, `MAX_PROJECTS_PER_USER`, Arabic 429 responses) guard
+  against queue abuse and unbounded DB growth; `PAYMENT.SALE.DENIED` and
+  `BILLING.SUBSCRIPTION.PAYMENT.FAILED` now downgrade the plan; stale/out-of-
+  order PayPal webhooks (old subscription id) are ignored so late events can't
+  resurrect a cancelled plan or clobber an active one.
+- **Webhook decision layer** — `app/services/subscription-events.js` (pure,
+  unit-tested) with tests for activate/approve/cancel/refund/payment-failed/
+  stale/duplicate/mismatch cases.
+- **Restore tooling** — `scripts/restore.js` (integrity-checked restore) and
+  `docs/operations/backup-restore.md`.
+- **Test suite** — `npm test` runs fast unit + HTTP integration tests
+  (`test/webhook.test.js`, `test/backup.test.js`, `test/limits.test.js`,
+  `test/webhook-http.test.js`) in addition to the E2E smoke suite; CI runs
+  both.
+- **`docs/launch-checklist.md`** — PASS/FAIL/BLOCKED launch checklist.
+
 ### Changed
-- **Production hardening** — centralized error handling with JSON API errors
-  and Arabic `404.html`/`500.html` pages; `helmet` security headers; optional
-  gated `CORS_ORIGIN`; gzip compression; per-IP rate limit on
-  `/api/generate/*` (`RATE_LIMIT_GENERATE_PER_MIN`); input validation for
-  script generation and the PayPal webhook payload; startup env validation
-  (required `PAYPAL_*`/`GEMINI_API_KEY` enforced in production).
-- **CI/CD** — GitHub Actions runs syntax checks and the full smoke suite on
-  every PR and push to `saas`/`main`; Dependabot keeps npm and
-  GitHub Actions dependencies updated weekly.
-- **PayPal sandbox onboarding** — subscription creation no longer binds to a
-  `subscriber.email_address` (the cause of failed buyer approvals in sandbox);
-  `scripts/setup-paypal.js` automates product/plan/webhook setup.
-- **Post-approval UX** — the billing success page auto-redirects to
-  `/projects` after a few seconds, so the activation webhook arrives before
-  the dashboard loads; `GET /projects` serves the dashboard directly.
+- Docker Compose mounts the whole `./data` volume (DB + outputs + backups),
+  reads `env_file: .env`, adds `restart` policy and a healthcheck.
+- `.env.example` documents the new limits; removed the unused `PEXELS_API_KEY`
+  from the local `.env`.
+
+### Fixed
+- Subscription re-activation after cancel now works (a new PayPal sub id is
+  allowed to replace an inactive one) while still ignoring stale retries.
 
 ## [0.8.0] — Phase 7: PayPal subscription billing
 
