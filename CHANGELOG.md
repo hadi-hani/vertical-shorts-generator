@@ -22,6 +22,9 @@ merged into the `saas` branch; `main` is reserved for release tags.
   `test/webhook-http.test.js`) in addition to the E2E smoke suite; CI runs
   both.
 - **`docs/launch-checklist.md`** — PASS/FAIL/BLOCKED launch checklist.
+- **`docs/fast-beta-launch.md`** — سريع: نشر Beta على VPS عام (متغيرات
+  production، أوامر Docker، Cloudflare A record + Caddy/Nginx، PayPal Sandbox
+  webhook، اختبار الاشتراك/الإلغاء، اختبار backup restore، و جدول Go/No-Go).
 
 ### Changed
 - Docker Compose mounts the whole `./data` volume (DB + outputs + backups),
