@@ -17,10 +17,14 @@ const PRODUCT_NAME = 'Shorts Generator';
 const PLAN_NAME = 'Shorts Generator Premium (Monthly)';
 const PLAN_DESC = 'Monthly premium plan: larger video quota.';
 
-/* All events the app handles (see app/services/subscription-events.js). */
+/* All events the app handles (see app/services/subscription-events.js).
+ * NOTE: BILLING.SUBSCRIPTION.APPROVED is NOT a valid PayPal webhook event
+ * name (it is only a subscription object status); RE-ACTIVATED/RENEWED are
+ * the real events that signal the sub is active again. */
 const WEBHOOK_EVENTS = [
   'BILLING.SUBSCRIPTION.ACTIVATED',
-  'BILLING.SUBSCRIPTION.APPROVED',
+  'BILLING.SUBSCRIPTION.RE-ACTIVATED',
+  'BILLING.SUBSCRIPTION.RENEWED',
   'BILLING.SUBSCRIPTION.CANCELLED',
   'BILLING.SUBSCRIPTION.EXPIRED',
   'BILLING.SUBSCRIPTION.SUSPENDED',

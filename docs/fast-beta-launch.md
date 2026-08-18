@@ -176,7 +176,8 @@ sudo nginx -t && sudo systemctl reload nginx
    - **Webhook URL**: `https://caption.teachhorizon.online/api/billing/webhook`
    - فعّل كل الأحداث:
      - `BILLING.SUBSCRIPTION.ACTIVATED`
-     - `BILLING.SUBSCRIPTION.APPROVED`
+     - `BILLING.SUBSCRIPTION.RE-ACTIVATED`
+     - `BILLING.SUBSCRIPTION.RENEWED`
      - `BILLING.SUBSCRIPTION.CANCELLED`
      - `BILLING.SUBSCRIPTION.EXPIRED`
      - `BILLING.SUBSCRIPTION.SUSPENDED`

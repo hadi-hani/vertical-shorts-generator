@@ -43,7 +43,7 @@ Tests: `npm test` (unit + integration) and `npm run smoke` (full E2E).
 | Checkout (create subscription, approval URL) | PASS (mock) / MANUAL (sandbox) | smoke; live needs credentials |
 | Webhook signature verification | PASS | `test/webhook-http.test.js` (invalid → 400) |
 | Duplicate event idempotency | PASS | smoke |
-| ACTIVATE / APPROVED / SALE.COMPLETED | PASS | smoke + `test/webhook.test.js` |
+| ACTIVATE / RE-ACTIVATED / RENEWED / SALE.COMPLETED | PASS | smoke + `test/webhook.test.js` |
 | CANCEL / EXPIRED / SUSPENDED | PASS | smoke |
 | REFUND / REVERSED → downgrade | PASS | smoke + unit |
 | PAYMENT.FAILED / SALE.DENIED → downgrade | PASS | unit |

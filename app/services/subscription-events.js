@@ -22,8 +22,16 @@
 
 const ACTIVATE_EVENTS = [
   'BILLING.SUBSCRIPTION.ACTIVATED',
-  'BILLING.SUBSCRIPTION.APPROVED',
+  'BILLING.SUBSCRIPTION.RE-ACTIVATED',
+  'BILLING.SUBSCRIPTION.RENEWED',
   'PAYMENT.SALE.COMPLETED',
+];
+/* Events that explicitly signal the subscription is active again, so they
+ * re-activate even an INACTIVE same-sub (suspended/expired then re-activated)
+ * instead of being treated as a stale retry of an old ACTIVATED event. */
+const REACTIVATE_EVENTS = [
+  'BILLING.SUBSCRIPTION.RE-ACTIVATED',
+  'BILLING.SUBSCRIPTION.RENEWED',
 ];
 const DEACTIVATE_EVENTS = [
   'BILLING.SUBSCRIPTION.CANCELLED',
@@ -49,11 +57,12 @@ function decide({ eventType, subId, currentSub }) {
 
   if (currentSub) {
     const sameSub = String(currentSub.id) === String(subId);
+    const isReactivate = REACTIVATE_EVENTS.includes(eventType);
     if (isActivate) {
       if (sameSub && currentSub.status === 'ACTIVE') {
         return { action: 'ignore', reason: 'already_active', note: 'duplicate activate event' };
       }
-      if (sameSub && currentSub.status === 'INACTIVE') {
+      if (sameSub && currentSub.status === 'INACTIVE' && !isReactivate) {
         return { action: 'ignore', reason: 'sub_inactivated', note: `stale activate for ${currentSub.status} sub` };
       }
       if (!sameSub && currentSub.status === 'ACTIVE') {
@@ -76,4 +85,4 @@ function decide({ eventType, subId, currentSub }) {
   };
 }
 
-module.exports = { ACTIVATE_EVENTS, DEACTIVATE_EVENTS, decide };
+module.exports = { ACTIVATE_EVENTS, DEACTIVATE_EVENTS, REACTIVATE_EVENTS, decide };

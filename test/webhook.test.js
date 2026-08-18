@@ -35,8 +35,16 @@ describe('decide — activate', () => {
     assert.equal(r.action, 'activate');
     assert.equal(r.plan, 'premium');
   });
-  it('activates an APPROVED event (pre-activation)', () => {
-    const r = run('BILLING.SUBSCRIPTION.APPROVED', 'sub-a', null);
+  it('activates a RE-ACTIVATED event (pre-activation)', () => {
+    const r = run('BILLING.SUBSCRIPTION.RE-ACTIVATED', 'sub-a', null);
+    assert.equal(r.action, 'activate');
+  });
+  it('re-activates an INACTIVE same-sub on RE-ACTIVATED (resumed sub)', () => {
+    const r = run('BILLING.SUBSCRIPTION.RE-ACTIVATED', 'sub-a', mkSub('sub-a', 'INACTIVE'));
+    assert.equal(r.action, 'activate');
+  });
+  it('re-activates an INACTIVE same-sub on RENEWED', () => {
+    const r = run('BILLING.SUBSCRIPTION.RENEWED', 'sub-a', mkSub('sub-a', 'INACTIVE'));
     assert.equal(r.action, 'activate');
   });
   it('activates a NEW sub id after the old one was cancelled (re-subscription)', () => {
